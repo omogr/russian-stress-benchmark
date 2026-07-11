@@ -89,7 +89,7 @@ russian-stress-benchmark/
 │   └── pattern.txt          # Gold standard (placeholder)
 ├── output/                  # Test results (created automatically)
 ├── run.sh                   # Main launch script
-├── split_sentences_by_lines.py
+├── split_text_by_lines.py
 ├── extract_gold_accentuation.py
 ├── run_accentuator.py
 ├── extract_word_accentuation.py

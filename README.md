@@ -91,7 +91,7 @@ russian-stress-benchmark/
 │   └── pattern.txt          # Эталонный образец (заглушка)
 ├── output/                  # Результаты тестирования (создаётся автоматически)
 ├── run.sh                   # Главный скрипт запуска
-├── split_sentences_by_lines.py
+├── split_text_by_lines.py
 ├── extract_gold_accentuation.py
 ├── run_accentuator.py
 ├── extract_word_accentuation.py
