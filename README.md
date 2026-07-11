@@ -1,5 +1,7 @@
 # russian-stress-benchmark
 
+[English README](https://github.com/omogr/russian-stress-benchmark/blob/main/README_eng.md)
+
 Набор скриптов для сравнения библиотек расстановки ударений в русском тексте с эталонной ручной разметкой.
 
 ## Что делает
