@@ -1,14 +1,14 @@
 
 
-# эксперимент - что будет, если обрабатывать более крупными кусками (ничего интересного, всё то же самое)
+# эксперимент - что будет, если обрабатывать более крупными кусками (ничего интересного, особых отличий нет)
 
 # python merge_sentences.py gold/pattern.txt -o output/pattern.json -m 500
 
-# разбиваем текстовый файл (образец с ручной разметкой) на предложения по строкам
+# переписываем текстовый файл (образец с ручной разметкой) в список строк в формате json
 
-python split_sentences_by_lines.py gold/pattern.txt -o output/pattern.json
+python split_text_by_lines.py gold/pattern.txt -o output/pattern.json
 
-# Добавляем пословную разметку
+# Добавляем разбиение на слова к образцу с ручной разметкой
 
 python extract_gold_accentuation.py output/pattern.json -o output/lib/GOLD_results.json
 
@@ -24,7 +24,7 @@ python run_accentuator.py silero_stress output/lib/GOLD_results.json -o output/r
 
 python run_accentuator.py accent_engine output/lib/GOLD_results.json -o output/lib/
 
-# размечаем ударения библиотекой llm_enhancer
+# размечаем ударения библиотекой llm_enhancer (требуется сначала скачать локальную модель)
 
 # python run_accentuator.py llm_enhancer output/GOLD_results.json -o output/lib/
 
@@ -47,3 +47,7 @@ python compare_accentuators.py output/lib -o output/comparison.json
 # Формируем отчет
 
 python generate_report.py output/comparison.json output/report.md
+
+# Формируем отчет на английском
+
+python generate_report_en.py output/comparison.json output/report_en.md
