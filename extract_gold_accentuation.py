@@ -4,7 +4,7 @@ extract_gold_accentuation.py
 
 Извлекает "золотую" разметку ударений из входного JSON-файла,
 где ударения уже проставлены знаками '+' или U+0301,
-и сохраняет результат в формате accent_engine_results.json.
+и сохраняет результат в формате text_parser_results.json.
 
 Usage:
     python extract_gold_accentuation.py input.json -o results/
@@ -28,15 +28,36 @@ from typing import Any #, Callable
 
 VOWELS = frozenset('аеёиоуыэюяАЕЁИОУЫЭЮЯ')
 
-# Try to import TextParser from accent_engine; if unavailable, fail with a clear message
+# Try to import TextParser from text_parser; if unavailable, fail with a clear message
 try:
-    from accent_engine.parser import TextParser
+    from text_parser.parser import TextParser
     _PARSER = TextParser()
 except ImportError as exc:
     raise ImportError(
-        "Не удалось импортировать TextParser из accent_engine. "
-        "Убедитесь, что библиотека accent_engine установлена или доступна в PYTHONPATH."
+        "Не удалось импортировать TextParser из text_parser. "
+        "Убедитесь, что библиотека text_parser установлена или доступна в PYTHONPATH."
     ) from exc
+
+class DubiousStressPos:
+    def __init__(self):
+        self.dubious = {}
+        self.num_of_dubious = 0
+    def load(self, vocab_path):
+        with open(vocab_path, 'r', encoding="utf-8") as finp:
+            for entry in finp:
+                parts = entry.split('\t')
+                if len(parts) == 2:
+                    self.dubious[parts[0].strip()] = parts[1]
+    def is_dubious(self, word):
+        key = word.casefold()
+        if key in self.dubious:
+            self.num_of_dubious += 1
+            return True
+        if '-' in key:
+            return True
+        return False
+      
+dubious = DubiousStressPos()
 
 
 # -----------------------------------------------------------------------------
@@ -106,7 +127,7 @@ def build_accented_text(clean_text: str, stress_positions: List[int]) -> str:
 
 
 # -----------------------------------------------------------------------------
-# Word parsing (compatible with accent_engine)
+# Word parsing (compatible with text_parser)
 # -----------------------------------------------------------------------------
 
 def extract_word_info(doc_result: Any) -> list[dict]:
@@ -114,6 +135,8 @@ def extract_word_info(doc_result: Any) -> list[dict]:
     words = []
     for sentence in doc_result.sentences:
         for word in sentence.words:
+            if dubious.is_dubious(word.text):
+                word.stress = None
             words.append(word)
             '''
             {
@@ -129,7 +152,7 @@ def extract_word_info(doc_result: Any) -> list[dict]:
 
 def get_words(clean_text: str):
     """
-    Разбивает предложение на слова с помощью accent_engine.TextParser.
+    Разбивает предложение на слова с помощью text_parser.TextParser.
     Возвращает список объектов WordInfo (или совместимых по интерфейсу).
     """
     doc_result = _PARSER.parse(clean_text)
@@ -250,7 +273,7 @@ def process_file(input_path: Path, output_path: Path) -> None:
 def run_verify() -> int:
     """
     Создаёт тестовый JSON с размеченными ударениями, прогоняет через скрипт,
-    а затем сравнивает разбиение на слова с accent_engine.TextParser.
+    а затем сравнивает разбиение на слова с text_parser.TextParser.
     """
     test_cases = [
         {"text": "М+ама м+ыла р+аму.", "start": 1, "end": 20},
@@ -321,7 +344,7 @@ def run_verify() -> int:
                 print(f"   {m}")
             return 1
 
-        print("\n✅ VERIFICATION PASSED: tokenization matches accent_engine exactly.")
+        print("\n✅ VERIFICATION PASSED: tokenization matches text_parser exactly.")
         print("\n--- Sample output (first sentence) ---")
         print(json.dumps(gold['sentences'][0], ensure_ascii=False, indent=2))
         return 0
@@ -329,10 +352,10 @@ def run_verify() -> int:
 def run_verify2() -> int:
     """
     Создаёт тестовый JSON с размеченными ударениями, прогоняет через скрипт,
-    а затем сравнивает разбиение на слова с accent_engine.TextParser.
+    а затем сравнивает разбиение на слова с text_parser.TextParser.
     """
 
-    input_path = Path("results") / "accent_engine_results.json"
+    input_path = Path("results") / "text_parser_results.json"
     gold_path = Path("results") / "GOLD_results.json"
 
     with open(gold_path, 'r', encoding='utf-8') as f:
@@ -396,7 +419,7 @@ def run_verify2() -> int:
             print(f"   {m}")
         return 1
 
-    print("\n✅ VERIFICATION PASSED: tokenization matches accent_engine exactly.")
+    print("\n✅ VERIFICATION PASSED: tokenization matches text_parser exactly.")
     print("\n--- Sample output (first sentence) ---")
     print(json.dumps(gold['sentences'][0], ensure_ascii=False, indent=2))
     return 0
@@ -423,7 +446,12 @@ def main() -> int:
     parser.add_argument(
         '--verify',
         action='store_true',
-        help='Запустить проверочный тест и сравнить токенизацию с accent_engine',
+        help='Запустить проверочный тест и сравнить токенизацию с text_parser',
+    )
+    parser.add_argument(
+        '-d', '--dubious',
+        default=None,
+        help='Путь к словарю со словами с варьирующимся ударением',
     )
 
     args = parser.parse_args()
@@ -441,7 +469,12 @@ def main() -> int:
         return 1
 
     output_path = Path(args.output)
+    
+    if args.dubious is not None:
+        dubious.load(args.dubious)
+        
     process_file(input_path, output_path)
+    print('dubious', dubious.num_of_dubious, len(dubious.dubious))
     return 0
 
 

@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from ensure_data import ensure_data
+#from ensure_data import ensure_data
 
 
 VOWELS = 'аеёиоуыэюяАЕЁИОУЫЭЮЯ'
@@ -94,13 +94,59 @@ def extract_word_info(doc_result: Any) -> list[dict]:
 def load_library(library_name: str, args: argparse.Namespace) -> LibraryConfig:
     """Загружает указанную библиотеку и возвращает её конфигурацию."""
 
-    if library_name == 'accent_engine':
+    if library_name == 'accent_engine_v1':
         from accent_engine import AccentEngine, AccentConfig
         config = AccentConfig(data_path=Path(args.data_path))
         engine = AccentEngine(config)
 
         def accentuate(text: str):
             return engine.accentuate(text)
+            
+        return LibraryConfig(
+            name=library_name,
+            accentuate_fn=accentuate,
+            returns_document=True,
+        )
+    elif library_name == 'accent_engine_v0':
+        from accent_engine_v0 import AccentEngine, AccentConfig
+        config = AccentConfig(data_path=Path(args.data_path))
+        engine = AccentEngine(config)
+
+        def accentuate(text: str):
+            return engine.accentuate(text)
+            
+
+        return LibraryConfig(
+            name=library_name,
+            accentuate_fn=accentuate,
+            returns_document=True,
+        )
+
+    elif library_name == 'accent_engine':
+
+        from udarenie import load_accentor
+
+        print('run_accentuator udarenie data_path', args.data_path)
+        accentor = load_accentor(data_dir=Path(args.data_path), use_morph=False)
+
+        def accentuate(text: str):
+            return accentor.accentuate(text)
+
+        return LibraryConfig(
+            name=library_name,
+            accentuate_fn=accentuate,
+            returns_document=True,
+        )
+
+    elif library_name == 'udarenie':
+
+        from udarenie import load_accentor
+
+        print('run_accentuator udarenie data_path', args.data_path)
+        accentor = load_accentor(data_dir=Path(args.data_path))
+
+        def accentuate(text: str):
+            return accentor.accentuate(text)
 
         return LibraryConfig(
             name=library_name,
@@ -112,8 +158,31 @@ def load_library(library_name: str, args: argparse.Namespace) -> LibraryConfig:
         from accent_engine import AccentEngine, AccentConfig
         from wiktionary_enhancer import WiktionaryAccentEnhancer, WiktionaryStressFinder
 
-        engine = AccentEngine(AccentConfig(data_path=Path(args.data_path)))
-        finder = WiktionaryStressFinder(args.wiki_path)
+        path1 = Path(args.data_path) / 'accent_engine'
+        path2 = str(Path(args.data_path) / 'wiktionary_enhancer/morph.pq')
+
+        engine = AccentEngine(AccentConfig(data_path=path1))
+        finder = WiktionaryStressFinder(path2)
+        enhancer = WiktionaryAccentEnhancer(engine, finder)
+
+        def accentuate(text: str):
+            return enhancer.accentuate(text)
+
+        return LibraryConfig(
+            name=library_name,
+            accentuate_fn=accentuate,
+            returns_document=True,
+        )
+
+    elif library_name == 'wiki_enhancer_v0':
+        from accent_engine_v0 import AccentEngine, AccentConfig
+        from wiktionary_enhancer_v0 import WiktionaryAccentEnhancer, WiktionaryStressFinder
+        
+        path1 = Path(args.data_path) / 'accent_engine'
+        path2 = str(Path(args.data_path) / 'wiktionary_enhancer/kaikki-forms.jsonl')
+
+        engine = AccentEngine(AccentConfig(data_path=path1))
+        finder = WiktionaryStressFinder(path2)
         enhancer = WiktionaryAccentEnhancer(engine, finder)
 
         def accentuate(text: str):
@@ -232,7 +301,7 @@ def main():
         print(f"[ERROR] Файл не найден: {input_path}")
         return 1
         
-    ensure_data()
+    # ensure_data()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

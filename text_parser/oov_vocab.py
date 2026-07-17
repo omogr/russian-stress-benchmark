@@ -12,7 +12,7 @@ import os
 import sys
 
 from typing import Optional
-
+import pyarrow.parquet as pq
 
 # =============================================================================
 # INTERNAL HELPERS
@@ -91,6 +91,7 @@ def _match_form_to_norm(
     Returns a ``(common_prefix_length, vocab_entry)`` pair if the suffix
     pattern of the divergence is present in *tail_index*, otherwise ``None``.
     """
+    # print('vocab_entry', vocab_entry)
     norm_form, stress_positions = vocab_entry
     prefix_len = _longest_common_prefix(form, norm_form)
     tail_key = (form[prefix_len:], norm_form[prefix_len:])
@@ -125,8 +126,33 @@ class OovVocabulary:
         Args:
             data_path: Directory that contains ``unk_vocab.pickle``.
         """
+
+        vocab_file = os.path.join(data_path, "oov_tails.pq")
+
+
+        table = pq.read_table(vocab_file)
+    
+        word_suffix = table.column(0).to_pylist()
+        norm_suffix = table.column(1).to_pylist()
+        #tail_list1 = list(zip(word_suffix, norm_suffix))
+        
+        self._tail_index = set(zip(word_suffix, norm_suffix))
+
+        #self._tail_index = set(zip(word_suffix, norm_suffix))
+        #print('tail_list', word_suffix[:5], norm_suffix[:5])
+        vocab_file = os.path.join(data_path, "oov_forms.pq")
+
+        table = pq.read_table(vocab_file)
+    
+        normalized_form = table.column(0).to_pylist()
+        stress_pos_list = table.column(1).to_pylist()
+        
+        #zzz = list(zip(normalized_form, stress_pos_list))
+        self._vocab = list(zip(normalized_form, stress_pos_list))
+
+        '''
         vocab_file = os.path.join(data_path, "oov_tails.csv")
-        tail_list = [] #set()
+        tail_list = []
         errors = 0
         with open(vocab_file, "r", encoding="windows-1251") as finp:
             
@@ -140,7 +166,16 @@ class OovVocabulary:
                 tail_list.append((word_suffix, norm_suffix))
             
         self._tail_index = set(tail_list)
+        print('diff', len(tail_list), len(tail_list1))
         
+        zzz = list(zip(tail_list, tail_list1))
+        print('tail_list, tail_list1', zzz[:10])
+
+        diff = []
+        for x, y in zzz:
+            if x != y:
+                print('diff', x, y)
+              
         vocab_file = os.path.join(data_path, "oov_forms.csv")
         self._vocab = []
 
@@ -155,10 +190,20 @@ class OovVocabulary:
                 normalized_form, stress_pos_list = parts
                 self._vocab.append((normalized_form, stress_pos_list))
             
-
+        # self._vocab = []
         if errors > 0:
             print("OovVocabulary load errors", errors, file=sys.stderr)
+            
+        print('diff1', len(self._vocab), len(self._vocab1))
+      
+        zzz = list(zip(self._vocab, self._vocab1))
+        print('_vocab, _vocab1', zzz[:10])
 
+        diff = []
+        for x, y in zzz:
+            if x != y:
+                print('diff1', x, y)
+        '''
 
     # ------------------------------------------------------------------
     # Lookup

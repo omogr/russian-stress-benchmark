@@ -1,17 +1,17 @@
 """
-Wiktionary Accent Enhancer — пост-обработка ударений через Wiktionary (kaikki.org)
+Morph Accent Enhancer — пост-обработка ударений через морфологический словарь
 и Natasha NewsMorphTagger.
 
 Использование:
     from accent_engine import AccentEngine, AccentConfig
-    from wiktionary_enhancer import WiktionaryAccentEnhancer
-    from morph_stress_finder import WiktionaryStressFinder
+    from morph_enhancer import MorphAccentEnhancer
+    from morph_stress_finder import MorphStressFinder
 
     engine = AccentEngine(AccentConfig(data_path=Path("...")))
-    finder = WiktionaryStressFinder("kaikki-forms.jsonl")
-    enhancer = WiktionaryAccentEnhancer(engine, finder)
+    finder = MorphStressFinder("kaikki-forms.jsonl")
+    enhancer = MorphAccentEnhancer(engine, finder)
 
-    result = enhancer.accentuate("На другой день Алексей поехал к Муромскому.")
+    result = enhancer.accentuate("Руки как ноги.")
     print(result.to_stress_marks())
 """
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from accent_engine import (
+from ..accent_engine import (
     AccentEngine,
     DocumentResult,
     WordInfo,
@@ -28,7 +28,7 @@ from accent_engine import (
     StressMethod,
 )
 
-from .morph_stress_finder import WiktionaryStressFinder
+from .morph_stress_finder import MorphStressFinder
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,13 @@ def _vowel_positions(text: str) -> list[int]:
     return [i for i, ch in enumerate(text.lower()) if ch in RUSSIAN_VOWELS_LOWER]
 
 
-class WiktionaryAccentEnhancer:
+class MorphAccentEnhancer:
     """
-    Обёртка над AccentEngine, которая уточняет ударения через WiktionaryStressFinder.
+    Обёртка над AccentEngine, которая уточняет ударения через MorphStressFinder.
 
     Работает в два этапа:
       1. Быстрая акцентуация через AccentEngine.
-      2. Пост-обработка: для слов, по которым WiktionaryStressFinder даёт
+      2. Пост-обработка: для слов, по которым MorphStressFinder даёт
          ровно один вариант ударения, заменяем результат на этот вариант.
          Во всех остальных случаях (0 или >1 вариантов) оставляем результат
          AccentEngine.
@@ -57,25 +57,25 @@ class WiktionaryAccentEnhancer:
     def __init__(
         self,
         accent_engine: AccentEngine,
-        stress_finder: WiktionaryStressFinder,
+        stress_finder: MorphStressFinder,
     ):
         self.accent_engine = accent_engine
         self.stress_finder = stress_finder
 
-        # Пробуем использовать StressMethod.WIKTIONARY, если доступен в core.py
+        # Пробуем использовать StressMethod.MORPH, если доступен в core.py
         try:
-            self._wiktionary_method = StressMethod.WIKTIONARY
+            self._morph_method = StressMethod.MORPH
         except AttributeError:
-            self._wiktionary_method = StressMethod.DICT_SINGLE
+            self._morph_method = StressMethod.DICT_SINGLE
             logger.debug(
-                "StressMethod.WIKTIONARY не найден — используем DICT_SINGLE как fallback"
+                "StressMethod.MORPH не найден — используем DICT_SINGLE как fallback"
             )
 
     # ------------------------------------------------------------------
     def accentuate(self, text: str) -> DocumentResult:
         """
         Акцентуирует текст с помощью AccentEngine, затем уточняет
-        однозначные ударения через WiktionaryStressFinder.
+        однозначные ударения через MorphStressFinder.
         """
         doc = self.accent_engine.accentuate(text)
         self._enhance(doc, text)
@@ -83,21 +83,21 @@ class WiktionaryAccentEnhancer:
 
     # ------------------------------------------------------------------
     def _enhance(self, doc: DocumentResult, text: str) -> None:
-        """Пост-обработка: замена ударений там, где Wiktionary даёт 1 вариант."""
+        """Пост-обработка: замена ударений там, где MorphAccentEnhancer даёт 1 вариант."""
         try:
             finder_results = self.stress_finder.find_stress(text)
         except Exception as exc:
-            logger.warning(f"WiktionaryStressFinder failed: {exc}")
+            logger.warning(f"MorphStressFinder failed: {exc}")
             return
 
         # Индексируем результаты Natasha по абсолютной позиции в тексте
-        wikt_by_pos: dict[tuple[int, int], list[str]] = {}
+        morph_by_pos: dict[tuple[int, int], list[str]] = {}
         for token in finder_results:
             start = token.get("start")
             end = token.get("end")
             if start is None or end is None:
                 continue
-            wikt_by_pos[(start, end)] = token.get("stress_options", [])
+            morph_by_pos[(start, end)] = token.get("stress_options", [])
 
         # Проходим по словам из accent_engine и сопоставляем по (start, end)
         for sentence in doc.sentences:
@@ -105,7 +105,7 @@ class WiktionaryAccentEnhancer:
                 if not word.is_russian_word:
                     continue
 
-                options = wikt_by_pos.get((word.start, word.end))
+                options = morph_by_pos.get((word.start, word.end))
                 if not options:
                     continue
                 if len(options) != 1:
@@ -116,9 +116,9 @@ class WiktionaryAccentEnhancer:
                 stress = self._parse_stressed_form(word, stressed_form)
                 if stress is not None:
                     word.stress = stress
-                    word.method = self._wiktionary_method
+                    word.method = self._morph_method
                     logger.debug(
-                        f"Wiktionary refined '{word.text}' → {stressed_form} "
+                        f"Morph refined '{word.text}' → {stressed_form} "
                         f"(vowel_index={stress.vowel_index}, char_index={stress.char_index})"
                     )
 
@@ -130,7 +130,7 @@ class WiktionaryAccentEnhancer:
         Преобразует словарную форму вида 'дабы́' в StressPosition
         для оригинального слова (с учётом регистра и ё/е).
 
-        Ударный знак U+0301 в Wiktionary стоит ПОСЛЕ ударной гласной.
+        Ударный знак U+0301 в Morph стоит ПОСЛЕ ударной гласной.
         """
         stress_idx = stressed_form.find(STRESS_MARK)
         if stress_idx < 0:

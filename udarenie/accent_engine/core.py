@@ -71,7 +71,7 @@ class StressMethod(Enum):
     UNKNOWN = auto()        # could not determine
     NON_WORD = auto()       # not a Russian word (punctuation, tags, numbers)
     LLM = auto()
-    WIKTIONARY = auto()
+    MORPH = auto()
 
 
 class OutputFormat(Enum):

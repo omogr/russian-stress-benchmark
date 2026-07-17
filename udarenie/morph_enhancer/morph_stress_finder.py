@@ -1,22 +1,22 @@
 import json
 from collections import defaultdict
 from natasha import Segmenter, MorphVocab, NewsEmbedding, NewsMorphTagger, Doc
+import pyarrow.parquet as pq
 
-
-class WiktionaryStressFinder:
+class MorphStressFinder:
     """
     Находит ударения в русском тексте, сопоставляя морфологические атрибуты
-    Natasha NewsMorphTagger с данными Wiktionary (kaikki.org).
+    Natasha NewsMorphTagger с данными словаря.
 
     Алгоритм:
-    1. При загрузке kaikki: для каждой словоформы с ударением строим индекс
+    1. При загрузке словаря: для каждой словоформы с ударением строим индекс
        нормализованная_форма → список (pos, morph_tags, stressed_form).
     2. При обработке текста: для каждого токена ищем его в индексе,
        фильтруем наборы по совместимости с Natasha-атрибутами.
     3. Возвращаем все допустимые варианты ударений или пустой список.
     """
 
-    # --- Сопоставление POS Natasha → Wiktionary ---
+    # --- Сопоставление POS Natasha → морфологический словарь ---
     POS_MAP = {
         'ADJ':   'adjective',
         'ADV':   'adverb',
@@ -33,7 +33,7 @@ class WiktionaryStressFinder:
         'PROPN': 'name',
     }
 
-    # --- Сопоставление feats Natasha → Wiktionary ---
+    # --- Сопоставление feats Natasha → морфологический словарь ---
     FEAT_MAP = {
         'Number': {
             'Sing': 'singular',
@@ -94,7 +94,7 @@ class WiktionaryStressFinder:
         },
     }
 
-    # --- Теги Wiktionary, которые НЕ относятся к морфологическим атрибутам ---
+    # --- Теги морфологического словаря, которые НЕ относятся к морфологическим атрибутам ---
     NON_MORPH_TAGS = {
         'canonical', 'romanization', 'inflection-template', 'table-tags', 'class',
         'alternative', 'error-unrecognized-form', 'error-unknown-tag',
@@ -124,7 +124,7 @@ class WiktionaryStressFinder:
         'degree':   {'comparative', 'superlative'},
     }
 
-    def __init__(self, kaikki_path: str):
+    def __init__(self, morph_path: str):
         self.segmenter = Segmenter()
         self.morph_vocab = MorphVocab()
         self.emb = NewsEmbedding()
@@ -132,7 +132,7 @@ class WiktionaryStressFinder:
 
         # Индекс: нормализованная_форма → [Record(pos, morph_tags, stressed_form)]
         self.index = defaultdict(list)
-        self._load_kaikki(kaikki_path)
+        self._load_morph_data(morph_path)
 
     # --------------------------------------------------------------------- #
     #  Внутренние утилиты
@@ -157,9 +157,9 @@ class WiktionaryStressFinder:
         """Проверяет наличие знака ударения U+0301."""
         return '\u0301' in form
 
-    def _natasha_feats_to_wiktionary(self, feats: dict) -> set:
-        """Преобразует Natasha feats → множество тегов Wiktionary."""
-        wikt_tags = set()
+    def _natasha_feats_to_morph(self, feats: dict) -> set:
+        """Преобразует Natasha feats → множество тегов морфологического словаря."""
+        morph_tags = set()
         for feat, value in (feats or {}).items():
             mapping = self.FEAT_MAP.get(feat)
             if not mapping:
@@ -168,10 +168,10 @@ class WiktionaryStressFinder:
             if not mapped:
                 continue
             if isinstance(mapped, set):
-                wikt_tags.update(mapped)
+                morph_tags.update(mapped)
             else:
-                wikt_tags.add(mapped)
-        return wikt_tags
+                morph_tags.add(mapped)
+        return morph_tags
 
     def _is_compatible(self, token_tags: set, form_tags: set) -> bool:
         """
@@ -186,13 +186,26 @@ class WiktionaryStressFinder:
         return True
 
     # --------------------------------------------------------------------- #
-    #  Загрузка kaikki
+    #  Загрузка morph
     # --------------------------------------------------------------------- #
-    def _load_kaikki(self, path: str):
+    def _load_morph_data(self, path: str):
         """
-        Загружает kaikki jsonl и строит индекс по нормализованным словоформам.
+        Загружает данные морфологического словаря и строит индекс по нормализованным словоформам.
         Для каждой формы с ударением сохраняем: (pos, morph_tags, stressed_form).
         """
+        table = pq.read_table(path)
+    
+        keys = table.column(0).to_pylist()
+        values = table.column(1).to_pylist()
+        self.index = dict(zip(keys, values))
+
+
+    def _load_morph_data_from_jsonl(self, path: str):
+        """
+        Загружает morph jsonl и строит индекс по нормализованным словоформам.
+        Для каждой формы с ударением сохраняем: (pos, morph_tags, stressed_form).
+        """
+        
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
@@ -221,7 +234,7 @@ class WiktionaryStressFinder:
             text          : исходное слово
             pos           : POS из Natasha
             feats         : feats из Natasha (dict)
-            stress_options: список строк (форм с ударением из Wiktionary)
+            stress_options: список строк (форм с ударением из морфологического словаря)
         """
         doc = Doc(text)
         doc.segment(self.segmenter)
@@ -239,114 +252,43 @@ class WiktionaryStressFinder:
                 'stress_options': [],
             }
 
-            '''{
-                'text': token.text,
-                'pos': token.pos,
-                'feats': dict(token.feats) if token.feats else {},
-                'stress_options': [],
-            }'''
 
             # Пропускаем не-слова
             if token.pos in ('PUNCT', 'SYM', 'X'):
                 results.append(result)
                 continue
 
-            # Преобразуем POS Natasha → Wiktionary
-            wikt_pos = self.POS_MAP.get(token.pos, token.pos.lower())
+            # Преобразуем POS Natasha → POS из морфологического словаря
+            morph_pos = self.POS_MAP.get(token.pos, token.pos.lower())
 
             # Преобразуем feats
-            token_tags = self._natasha_feats_to_wiktionary(
+            token_tags = self._natasha_feats_to_morph(
                 dict(token.feats) if token.feats else {}
             )
 
             # Ищем словоформу в индексе
             norm_token = self._normalize(token.text)
-            records = self.index.get(norm_token, [])
+            
+            if norm_token in self.index:
+                records = json.loads(self.index[norm_token])
 
-            # Фильтруем по совместимости
-            seen = set()
-            for rec in records:
-                # Проверяем POS
-                if rec['pos'] != wikt_pos:
-                    continue
+                # Фильтруем по совместимости
+                seen = set()
+                for rec in records:
+                    # Проверяем POS
+                    if rec['pos'] != morph_pos:
+                        continue
 
-                # Проверяем совместимость морфологических атрибутов
-                if not self._is_compatible(token_tags, rec['morph_tags']):
-                    continue
-                    
-                stressed = rec['stressed_form']
-                if stressed not in seen:
-                    result['stress_options'].append(stressed)
-                    seen.add(stressed)
+                    # Проверяем совместимость морфологических атрибутов
+                    if not self._is_compatible(token_tags, set(rec['morph_tags'])):
+                        continue
+                        
+                    stressed = rec['stressed_form']
+                    if stressed not in seen:
+                        result['stress_options'].append(stressed)
+                        seen.add(stressed)
 
-            results.append(result)
+                results.append(result)
 
         return results
-
-
-def group_kaikki_forms(src_path: str, dst_path: str):
-    """
-    Загружает kaikki jsonl и строит индекс по нормализованным словоформам.
-    Для каждой формы с ударением сохраняем: (pos, morph_tags, stressed_form).
-    """
-    index = defaultdict(list)
-    with open(src_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            pos = entry.get('pos', '')
-            if not pos:
-                continue
-
-            for form_entry in entry.get('forms', []):
-                form_text = form_entry.get('form', '')
-                if not form_text or not WiktionaryStressFinder._has_stress(form_text):
-                    continue
-                    
-                if form_text == "дабы́":
-                    continue
-
-                morph_tags = {t for t in form_entry.get('tags', []) if WiktionaryStressFinder._is_morph_tag(t)}
-
-                norm = WiktionaryStressFinder._normalize(form_text)
-                if norm:
-                    index[norm].append({
-                        'pos': pos,
-                        'morph_tags': list(morph_tags),
-                        'stressed_form': form_text,
-                    })
-
-    with open(dst_path, 'w', encoding='utf-8') as fout:
-        for norm, value in index.items():
-            print(json.dumps((norm, value), ensure_ascii=False), file=fout)
-
-
-# =====================================================================
-#  Пример использования
-# =====================================================================
-if __name__ == '__main__':
-    #KAIKKI_PATH = 'kaikki-filt.jsonl'
-    KAIKKI_SRC_PATH = 'kaikki.jsonl'
-    KAIKKI_PATH = 'kaikki-forms.jsonl'
-    
-    group_kaikki_forms(KAIKKI_SRC_PATH, KAIKKI_PATH)
-    print("=" * 60)
-    finder = WiktionaryStressFinder(KAIKKI_PATH)
-    print("=" * 60)    
-
-    text = ('На другой день Алексей, твёрдый в своём намерении, '
-            'рано утром поехал к Муромскому, дабы откровенно с ним объясниться.')
-
-    print("=" * 60)
-    print("Результат (без лемматизации):")
-    print("=" * 60)
-    for token in finder.find_stress(text):
-        stress = ', '.join(token['stress_options']) if token['stress_options'] else '-'
-        print(f"{token['text']:15} | {token['pos']:8} | {stress}")
 

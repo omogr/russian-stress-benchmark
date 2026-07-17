@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import json
+import pyarrow.parquet as pq
 
 import torch
 import torch.nn.functional as F
@@ -140,10 +141,27 @@ class AccentDictionary:
     """Stress dictionary loaded from wav2vec_words2.vcb format."""
 
     def __init__(self, data_path: Path):
-        self._entries: dict[str, DictionaryEntry] = {}
+        self._entries: dict[str, str] = {}
         self._load(data_path)
 
     def _load(self, data_path: Path) -> None:
+        vcb_file = data_path / 'vec_words.pq'
+        
+        #print('AccentDictionary vcb_file', vcb_file)
+        if vcb_file.exists():
+            self._load_from_vcb(vcb_file)
+        
+        else:
+            raise ModelLoadError(f"No dictionary file found in {vcb_file}")
+
+    def _load_from_vcb(self, path: Path) -> None:
+        table = pq.read_table(path)
+    
+        keys = table.column(0).to_pylist()
+        values = table.column(1).to_pylist()
+        self._entries = dict(zip(keys, values))
+
+    def _load0(self, data_path: Path) -> None:
         """Load dictionary from vcb file or pickle."""
         vcb_file = data_path / 'wav2vec_words2.vcb'
         pickle_file = data_path / 'wv_word_acc.pickle'
@@ -155,7 +173,7 @@ class AccentDictionary:
         else:
             raise ModelLoadError(f"No dictionary file found in {data_path}")
 
-    def _load_from_vcb(self, path: Path) -> None:
+    def _load_from_vcb0(self, path: Path) -> None:
         """Load from text vcb file."""
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -220,9 +238,38 @@ class AccentDictionary:
                 variants={},
             )
 
-    def lookup(self, word: str) -> Optional[DictionaryEntry]:
+    def lookup0(self, word: str) -> Optional[DictionaryEntry]:
         """Look up word in dictionary."""
         return self._entries.get(normalize_word(word))
+
+    def lookup(self, word: str) -> Optional[DictionaryEntry]:
+        normalized = normalize_word(word)
+        json_str = self._entries.get(normalized)
+        if not json_str:
+            return None
+        try:
+            variants = json.loads(json_str)
+        except json.JSONDecodeError:
+            return None
+        stress_positions = []
+        stress_vowels = []
+        for variant, weight in variants.items():
+            plus_pos = variant.find('+')
+            if plus_pos >= 0:
+                stress_positions.append(plus_pos)
+                vowel_idx = sum(1 for i in range(plus_pos) 
+                               if variant[i] in RUSSIAN_VOWELS)
+                stress_vowels.append(vowel_idx)
+
+        if stress_positions:
+            
+            return DictionaryEntry(
+                word=normalized,
+                stress_positions=tuple(sorted(set(stress_positions))),
+                stress_vowels=tuple(sorted(set(stress_vowels))),
+                variants=variants,
+            )
+        return None
 
     def has_single_stress(self, word: str) -> bool:
         """Check if word has unambiguous stress in dictionary."""
