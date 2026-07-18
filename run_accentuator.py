@@ -94,35 +94,7 @@ def extract_word_info(doc_result: Any) -> list[dict]:
 def load_library(library_name: str, args: argparse.Namespace) -> LibraryConfig:
     """Загружает указанную библиотеку и возвращает её конфигурацию."""
 
-    if library_name == 'accent_engine_v1':
-        from accent_engine import AccentEngine, AccentConfig
-        config = AccentConfig(data_path=Path(args.data_path))
-        engine = AccentEngine(config)
-
-        def accentuate(text: str):
-            return engine.accentuate(text)
-            
-        return LibraryConfig(
-            name=library_name,
-            accentuate_fn=accentuate,
-            returns_document=True,
-        )
-    elif library_name == 'accent_engine_v0':
-        from accent_engine_v0 import AccentEngine, AccentConfig
-        config = AccentConfig(data_path=Path(args.data_path))
-        engine = AccentEngine(config)
-
-        def accentuate(text: str):
-            return engine.accentuate(text)
-            
-
-        return LibraryConfig(
-            name=library_name,
-            accentuate_fn=accentuate,
-            returns_document=True,
-        )
-
-    elif library_name == 'accent_engine':
+    if library_name == 'accent_engine':
 
         from udarenie import load_accentor
 
@@ -147,46 +119,6 @@ def load_library(library_name: str, args: argparse.Namespace) -> LibraryConfig:
 
         def accentuate(text: str):
             return accentor.accentuate(text)
-
-        return LibraryConfig(
-            name=library_name,
-            accentuate_fn=accentuate,
-            returns_document=True,
-        )
-
-    elif library_name == 'wiki_enhancer':
-        from accent_engine import AccentEngine, AccentConfig
-        from wiktionary_enhancer import WiktionaryAccentEnhancer, WiktionaryStressFinder
-
-        path1 = Path(args.data_path) / 'accent_engine'
-        path2 = str(Path(args.data_path) / 'wiktionary_enhancer/morph.pq')
-
-        engine = AccentEngine(AccentConfig(data_path=path1))
-        finder = WiktionaryStressFinder(path2)
-        enhancer = WiktionaryAccentEnhancer(engine, finder)
-
-        def accentuate(text: str):
-            return enhancer.accentuate(text)
-
-        return LibraryConfig(
-            name=library_name,
-            accentuate_fn=accentuate,
-            returns_document=True,
-        )
-
-    elif library_name == 'wiki_enhancer_v0':
-        from accent_engine_v0 import AccentEngine, AccentConfig
-        from wiktionary_enhancer_v0 import WiktionaryAccentEnhancer, WiktionaryStressFinder
-        
-        path1 = Path(args.data_path) / 'accent_engine'
-        path2 = str(Path(args.data_path) / 'wiktionary_enhancer/kaikki-forms.jsonl')
-
-        engine = AccentEngine(AccentConfig(data_path=path1))
-        finder = WiktionaryStressFinder(path2)
-        enhancer = WiktionaryAccentEnhancer(engine, finder)
-
-        def accentuate(text: str):
-            return enhancer.accentuate(text)
 
         return LibraryConfig(
             name=library_name,

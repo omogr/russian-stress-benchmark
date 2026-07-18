@@ -12,11 +12,9 @@ This repository contains a pipeline for automatically testing and comparing vari
 
 | Library | Description |
 |---------|-------------|
-| `accent_engine` | A refactoring of the library from [omogre](https://github.com/omogr/omogre). Data and algorithms are unchanged. |
-| `wiki_enhancer` | Experimental module: `accent_engine` + morphological analyzer Natasha NewsMorphTagger + stress marks from Wiktionary. |
 | `silero_stress` | [silero-stress](https://github.com/snakers4/silero-stress) |
-| `ruaccent_turbo` | [ruaccent](https://github.com/Den4ikAI/ruaccent) |
-| `llm_enhancer` | Experimental module: `accent_engine` + disambiguation of semantic ambiguities using an LLM. |
+| `udarenie` | A refactoring of the library from [omogre](https://github.com/omogr/omogre) + morphological analyzer Natasha NewsMorphTagger + stress marks from Wiktionary. |
+| `accent_engine` | udarenie with load_accentor(use_morph=False) |
 
 ## Important limitations
 

@@ -12,11 +12,9 @@
 
 | Библиотека | Описание |
 |------------|----------|
-| `accent_engine` | Рефакторинг библиотеки из [omogre](https://github.com/omogr/omogre). Данные и алгоритмы не изменились. |
-| `wiki_enhancer` | Экспериментальный модуль: `accent_engine` + морфологический анализатор Natasha NewsMorphTagger + ударения из Wiktionary. |
 | `silero_stress` | [silero-stress](https://github.com/snakers4/silero-stress) |
-| `ruaccent_turbo` | [ruaccent](https://github.com/Den4ikAI/ruaccent) |
-| `llm_enhancer` | Экспериментальный модуль: `accent_engine` + разрешение смысловых неоднозначностей на основе LLM. |
+| `udarenie` | Модель и словари из [omogre](https://github.com/omogr/omogre) + морфологический анализатор Natasha NewsMorphTagger + ударения из Wiktionary. |
+| `accent_engine` | Библиотека udarenie с выключенной морфологией. Работает быстрее, но ошибок немного больше. |
 
 ## Важные ограничения
 
