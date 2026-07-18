@@ -73,7 +73,7 @@ After running `run.sh` (or `run.bat`), the following files are created in the `o
 - `output/comparison.json` — comparison data
 - **`output/report.md`** — the final Markdown report
 
-## [Sample report](https://github.com/omogr/russian-stress-benchmark/blob/main/reports/2026-07-10.pdf)
+## [Sample report](https://github.com/omogr/russian-stress-benchmark/blob/main/reports/2026-07-18-en.pdf)
 
 The report contains:
 - General information (date, number of sentences, number of libraries)

@@ -73,7 +73,7 @@
 - `output/comparison.json` — данные сравнения
 - **`output/report.md`** — итоговый отчёт в Markdown
 
-## [Пример отчёта](https://github.com/omogr/russian-stress-benchmark/blob/main/reports/2026-07-10.pdf)
+## [Пример отчёта](https://github.com/omogr/russian-stress-benchmark/blob/main/reports/2026-07-18.pdf)
 
 Отчёт содержит:
 - Общую информацию (дата, число предложений, количество библиотек)
