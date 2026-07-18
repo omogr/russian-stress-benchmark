@@ -14,7 +14,7 @@ This repository contains a pipeline for automatically testing and comparing vari
 |---------|-------------|
 | `silero_stress` | [silero-stress](https://github.com/snakers4/silero-stress) |
 | `udarenie` | A refactoring of the library from [omogre](https://github.com/omogr/omogre) + morphological analyzer Natasha NewsMorphTagger + stress marks from Wiktionary. |
-| `accent_engine` | udarenie with load_accentor(use_morph=False) |
+| `accent_engine` | udarenie without morphological analyzer |
 
 ## Important limitations
 

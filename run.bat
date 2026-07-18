@@ -14,3 +14,4 @@ python compare_accentuators.py output/lib -o output/comparison.json
 
 python generate_report.py output/comparison.json output/report.md
 
+python generate_report_en.py output/comparison.json output/report_en.md
