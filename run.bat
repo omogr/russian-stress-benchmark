@@ -8,7 +8,7 @@ python run_accentuator.py udarenie output/lib/GOLD_results.json -o output/lib/ -
 
 python run_accentuator.py accent_engine output/lib/GOLD_results.json -o output/lib/ --data-path data_plus
 
-python extract_word_accentuation.py output/raw/silero_stress_results.json -o output/test/silero_stress_results.json
+python extract_word_accentuation.py output/raw/silero_stress_results.json -o output/lib/silero_stress_results.json
 
 python compare_accentuators.py output/lib -o output/comparison.json
 
