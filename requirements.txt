@@ -1,6 +1,5 @@
-natasha==1.6.0
-numpy==2.0.0
-peft==0.18.1
-silero_stress==1.4
-torch==2.0.0
+natasha>=1.6.0
+numpy>=2.0.0
+silero_stress>=1.4
+torch>=2.0.0
 
