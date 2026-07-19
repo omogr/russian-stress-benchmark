@@ -83,11 +83,10 @@ def should_have_stress_info(word_info: dict) -> bool:
     return True
 
 
-
 # ---------------------------------------------------------------------------
 # Сопоставление слов
 # ---------------------------------------------------------------------------
-
+'''
 def match_words(
     gold_words: list[dict],
     lib_words: list[dict],
@@ -136,7 +135,7 @@ def match_words(
 # ---------------------------------------------------------------------------
 # Утилиты
 # ---------------------------------------------------------------------------
-'''
+
 VOWELS = set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
 
 
@@ -189,7 +188,7 @@ def should_have_stress_info(word_info: dict) -> bool:
         return False
     return True
 
-
+'''
 
 # ---------------------------------------------------------------------------
 # Сопоставление слов
@@ -217,7 +216,7 @@ def match_words(
 
     # Полное совпадение по длине и текстам
     if len(gold_words) == len(lib_words):
-        all_match = all(gw["text"] == lw["text"] for gw, lw in zip(gold_words, lib_words))
+        all_match = all(compare_strings(gw["text"], lw["text"]) for gw, lw in zip(gold_words, lib_words))
         if all_match:
             pairs = [(i, i) for i in range(len(gold_words))]
             return pairs, 0, 0, False
@@ -227,7 +226,7 @@ def match_words(
 
     prefix = 0
     for i in range(min(g_len, l_len)):
-        if gold_words[i]["text"] == lib_words[i]["text"]:
+        if compare_strings(gold_words[i]["text"], lib_words[i]["text"]):
             prefix += 1
         else:
             break
@@ -235,7 +234,7 @@ def match_words(
     suffix = 0
     max_suffix = min(g_len - prefix, l_len - prefix)
     for i in range(1, max_suffix + 1):
-        if gold_words[-i]["text"] == lib_words[-i]["text"]:
+        if compare_strings(gold_words[-i]["text"], lib_words[-i]["text"]):
             suffix += 1
         else:
             break
@@ -263,7 +262,7 @@ def match_words(
         return pairs, total_unmatched, 0, total_unmatched > 0
     else:
         return pairs, 0, total_unmatched, total_unmatched > 0
-'''
+
 
 def get_stress_pos(word_info: dict) -> int:
     if "stress_char_index" not in word_info:
