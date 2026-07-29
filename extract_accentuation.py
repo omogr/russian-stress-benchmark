@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-extract_gold_accentuation.py
+extract_accentuation.py
 
-Извлекает "золотую" разметку ударений из входного JSON-файла,
-где ударения уже проставлены знаками '+' или U+0301,
-и сохраняет результат в формате text_parser_results.json.
+Универсальный модуль для извлечения пословной разметки ударений.
+Работает как с эталонной (GOLD) разметкой, так и с результатами библиотек.
 
 Usage:
-    python extract_gold_accentuation.py input.json -o results/
-    python extract_gold_accentuation.py --verify
+    # Для GOLD-разметки (вход: JSON с полем 'text' в каждом предложении)
+    python extract_accentuation.py input.json -o output.json --mode gold
+
+    # Для результатов библиотек (вход: JSON с полем 'accented_text')
+    python extract_accentuation.py input.json -o output.json --mode lib
+
+    # Проверка токенизации
+    python extract_accentuation.py --verify
 """
 
 import argparse
@@ -19,7 +24,6 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional
-import copy
 from typing import Any
 
 # -----------------------------------------------------------------------------
@@ -37,6 +41,42 @@ except ImportError as exc:
         "Не удалось импортировать TextParser из text_parser. "
         "Убедитесь, что библиотека text_parser установлена или доступна в PYTHONPATH."
     ) from exc
+
+
+class DubiousStressPos:
+    """Словарь слов с варьирующимся ударением (исключаются из тестирования)."""
+    def __init__(self):
+        self.dubious = {}
+        self.num_of_dubious = 0
+
+    def load(self, vocab_path: Path):
+        with open(vocab_path, 'r', encoding="utf-8") as finp:
+            for entry in finp:
+                parts = entry.split('\t')
+                if len(parts) == 2:
+                    self.dubious[parts[0].strip()] = parts[1]
+
+    def is_dubious(self, word: str) -> bool:
+        key = word.casefold()
+        if key in self.dubious:
+            self.num_of_dubious += 1
+            return True
+        if '-' in key:
+            return True
+        return False
+
+
+# Global dubious checker (loaded on demand)
+_dubious_checker: Optional[DubiousStressPos] = None
+
+
+def get_dubious_checker(vocab_path: Optional[Path] = None) -> DubiousStressPos:
+    global _dubious_checker
+    if _dubious_checker is None:
+        _dubious_checker = DubiousStressPos()
+        if vocab_path is not None:
+            _dubious_checker.load(vocab_path)
+    return _dubious_checker
 
 
 # -----------------------------------------------------------------------------
@@ -78,7 +118,7 @@ def remove_accents_and_extract(text: str) -> Tuple[str, List[int]]:
             i += 2
             continue
 
-        # Обычный символ
+        # Обычный символ (пропускаем сами знаки ударения)
         if ch not in '+\u0300\u0301':
             clean_chars.append(ch)
         i += 1
@@ -89,7 +129,6 @@ def remove_accents_and_extract(text: str) -> Tuple[str, List[int]]:
 def build_accented_text(clean_text: str, stress_positions: List[int]) -> str:
     """Строит текст с разметкой '+' перед ударной гласной."""
     chars = list(clean_text)
-    # Вставляем справа налево, чтобы индексы не сдвигались
     for pos in sorted(stress_positions, reverse=True):
         chars.insert(pos, '+')
     return ''.join(chars)
@@ -99,45 +138,29 @@ def build_accented_text(clean_text: str, stress_positions: List[int]) -> str:
 # Word parsing (compatible with text_parser)
 # -----------------------------------------------------------------------------
 
-def get_words0(clean_text: str):
-    """
-    Разбивает предложение на слова с помощью text_parser.TextParser.
-    Возвращает список объектов WordInfo (или совместимых по интерфейсу).
-    """
-    doc = _PARSER.parse(clean_text)
-    if not doc.sentences:
-        return []
-    return doc.sentences[0].words
-
-
-def extract_word_info(doc_result: Any) -> list[dict]:
+def extract_word_info(doc_result: Any, library_name: str = 'GOLD',
+                       dubious_path: Optional[Path] = None) -> list[dict]:
     """Извлекает пословную информацию из DocumentResult."""
+    dubious_checker = get_dubious_checker(dubious_path)
     words = []
     for sentence in doc_result.sentences:
         for word in sentence.words:
-
+            if dubious_checker.is_dubious(word.text):
+                word.stress = None
             words.append(word)
-            '''
-            {
-                'text': word.text,
-                'start': word.start,
-                'end': word.end,
-                'method': word.method.name if word.method else None,
-                'stress_vowel_index': word.stress.vowel_index if word.stress else None,
-                'stress_char_index': word.stress.char_index if word.stress else None,
-            })'''
     return words
 
 
-def get_words(clean_text: str):
+def get_words(clean_text: str, library_name: str = 'GOLD',
+              dubious_path: Optional[Path] = None):
     """
     Разбивает предложение на слова с помощью text_parser.TextParser.
-    Возвращает список объектов WordInfo (или совместимых по интерфейсу).
+    Возвращает список объектов WordInfo.
     """
     doc_result = _PARSER.parse(clean_text)
     if not doc_result.sentences:
         return []
-    return extract_word_info(doc_result)
+    return extract_word_info(doc_result, library_name, dubious_path)
 
 
 def build_word_info(words, stress_positions: List[int], library_name: str) -> List[dict]:
@@ -145,14 +168,12 @@ def build_word_info(words, stress_positions: List[int], library_name: str) -> Li
     Сопоставляет позиции ударений со словами и формирует список
     в формате accentuator_output_format.txt.
     """
-    # word_id -> list of stress dicts
     stress_map: dict = {}
 
     for pos in stress_positions:
         for w in words:
             if w.start <= pos < w.end:
                 char_idx = pos - w.start
-                # Вычисляем 0-based индекс среди гласных
                 vowel_idx = 0
                 found = False
                 for j, c in enumerate(w.text):
@@ -162,7 +183,6 @@ def build_word_info(words, stress_positions: List[int], library_name: str) -> Li
                             break
                         vowel_idx += 1
                 if not found:
-                    # Ударение не на гласной — пропускаем (ошибка разметки)
                     break
                 stress_map.setdefault(id(w), []).append({
                     'stress_char_index': char_idx,
@@ -174,7 +194,7 @@ def build_word_info(words, stress_positions: List[int], library_name: str) -> Li
     for w in words:
         stresses = stress_map.get(id(w), [])
         if stresses:
-            s = stresses[0]  # берём первое ударение
+            s = stresses[0]
             result.append({
                 'text': w.text,
                 'start': w.start,
@@ -197,76 +217,118 @@ def build_word_info(words, stress_positions: List[int], library_name: str) -> Li
 
 
 # -----------------------------------------------------------------------------
-# Main processing
+# Processing modes
 # -----------------------------------------------------------------------------
 
-def process_file(input_path: Path, output_path: Path) -> None:
+def process_gold(input_path: Path, output_path: Path,
+                 dubious_path: Optional[Path] = None) -> None:
+    """
+    Обрабатывает GOLD-разметку.
+    Входной JSON содержит поле 'text' в каждом предложении.
+    """
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     sentences_data = data.get('sentences', [])
-    
-    library_name = data.get('metadata', {}).get('library_name', "UNKNOWN_LIBRARY")
     start_time = time.perf_counter()
 
     sentence_results = []
     for item in sentences_data:
-        original_text = item.get("original_text")
-        accented_text = item.get("accented_text")
-        if not original_text:
-            original_text = ""
-        if not accented_text:
-            accented_text = ""
-        clean_text, stress_positions = remove_accents_and_extract(accented_text)
-        words = get_words(clean_text)
-        word_infos = build_word_info(words, stress_positions, library_name)
-        # accented_text = build_accented_text(clean_text, stress_positions)
-        item_copy = copy.copy(item)
-        item_copy['words'] = word_infos
+        original = item['text']
+        clean_text, stress_positions = remove_accents_and_extract(original)
+        words = get_words(clean_text, 'GOLD', dubious_path)
+        word_infos = build_word_info(words, stress_positions, 'GOLD')
+        accented_text = build_accented_text(clean_text, stress_positions)
 
-        sentence_results.append(item_copy)
-        '''
-        {
-            'original_text': original_text,
+        sentence_results.append({
+            'original_text': clean_text,
             'accented_text': accented_text,
             'words': word_infos,
             'process_time_seconds': 0.0,
             'errors': [],
         })
-        '''
 
-    #total_time = time.perf_counter() - start_time 
+    total_time = time.perf_counter() - start_time
+
     result_data = {
         'metadata': {
-            'library_name': library_name,
-            'input_file': data.get('metadata', {}).get('input_file', "-"),
-            'timestamp': data.get('metadata', {}).get('timestamp', "-"),
-            'load_time_seconds': data.get('metadata', {}).get('load_time_seconds', 0.0),
-            'total_process_time_seconds': data.get('metadata', {}).get('total_process_time_seconds', 0.0),
-            'total_time_seconds': data.get('metadata', {}).get('total_time_seconds', 0.0),
+            'library_name': 'GOLD',
+            'input_file': str(input_path),
+            'timestamp': datetime.now().isoformat(),
+            'load_time_seconds': 0.0,
+            'total_process_time_seconds': round(total_time, 4),
+            'total_time_seconds': round(total_time, 4),
             'sentence_count': len(sentence_results),
         },
         'sentences': sentence_results,
     }
-    '''
-        result_data = {
-            'metadata': {
-                'library_name': library_name,
-                'input_file': str(input_path),
-                'timestamp': datetime.now().isoformat(),
-                'load_time_seconds': 0.0,
-                'total_process_time_seconds': round(total_time, 4),
-                'total_time_seconds': round(total_time, 4),
-                'sentence_count': len(sentence_results),
-            },
-            'sentences': sentence_results,
-        }
-    '''
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-    print(f"Saved: {output_path}")
+    print(f"Saved GOLD results: {output_path}")
+
+
+def process_lib(input_path: Path, output_path: Path,
+                library_name: Optional[str] = None,
+                dubious_path: Optional[Path] = None) -> None:
+    """
+    Обрабатывает результаты библиотеки.
+    Входной JSON содержит поле 'accented_text' в каждом предложении.
+    Также копирует метаданные из входного файла.
+    """
+    with open(input_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    sentences_data = data.get('sentences', [])
+    metadata = data.get('metadata', {})
+
+    # Auto-detect library name from metadata if not provided
+    if library_name is None:
+        library_name = metadata.get('library_name', 'UNKNOWN_LIBRARY')
+
+    start_time = time.perf_counter()
+
+    sentence_results = []
+    for item in sentences_data:
+        original_text = item.get("original_text", "")
+        accented_text = item.get("accented_text", "")
+
+        if not original_text and accented_text:
+            # Fallback: extract clean text from accented_text
+            clean_text, stress_positions = remove_accents_and_extract(accented_text)
+        else:
+            clean_text, stress_positions = remove_accents_and_extract(accented_text)
+
+        words = get_words(clean_text, library_name, dubious_path)
+        word_infos = build_word_info(words, stress_positions, library_name)
+
+        item_copy = {
+            'original_text': original_text or clean_text,
+            'accented_text': accented_text,
+            'words': word_infos,
+            'process_time_seconds': item.get('process_time_seconds', 0.0),
+            'errors': item.get('errors', []),
+        }
+        sentence_results.append(item_copy)
+
+    total_time = time.perf_counter() - start_time
+
+    # Preserve original metadata, just update what we computed
+    result_metadata = dict(metadata)
+    result_metadata['sentence_count'] = len(sentence_results)
+
+    result_data = {
+        'metadata': result_metadata,
+        'sentences': sentence_results,
+    }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+    print(f"Saved library results: {output_path}")
 
 
 # -----------------------------------------------------------------------------
@@ -305,7 +367,7 @@ def run_verify() -> int:
         with open(input_path, 'w', encoding='utf-8') as f:
             json.dump(test_data, f, ensure_ascii=False, indent=2)
 
-        process_file(input_path, output_path)
+        process_gold(input_path, output_path)
 
         with open(output_path, 'r', encoding='utf-8') as f:
             gold = json.load(f)
@@ -359,22 +421,39 @@ def run_verify() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description='Извлекает золотую разметку ударений из JSON с размеченным текстом'
+        description='Извлекает пословную разметку ударений из JSON'
     )
     parser.add_argument(
         'input_file',
         nargs='?',
-        help='Входной JSON-файл с предложениями (формат как у run_accentuator.py)',
+        help='Входной JSON-файл',
     )
     parser.add_argument(
         '-o', '--output',
-        default='gold_results.json',
-        help='Путь к выходному JSON (default: gold_results.json)',
+        default='results.json',
+        help='Путь к выходному JSON (default: results.json)',
+    )
+    parser.add_argument(
+        '--mode',
+        choices=['gold', 'lib'],
+        default='gold',
+        help='Режим: gold — эталонная разметка (поле text), '
+             'lib — результаты библиотеки (поле accented_text) (default: gold)',
+    )
+    parser.add_argument(
+        '--lib-name',
+        default=None,
+        help='Имя библиотеки (для mode=lib; если не указано, берётся из metadata)',
     )
     parser.add_argument(
         '--verify',
         action='store_true',
         help='Запустить проверочный тест и сравнить токенизацию с text_parser',
+    )
+    parser.add_argument(
+        '-d', '--dubious',
+        default=None,
+        help='Путь к словарю со словами с варьирующимся ударением',
     )
 
     args = parser.parse_args()
@@ -392,7 +471,13 @@ def main() -> int:
         return 1
 
     output_path = Path(args.output)
-    process_file(input_path, output_path)
+    dubious_path = Path(args.dubious) if args.dubious else None
+
+    if args.mode == 'gold':
+        process_gold(input_path, output_path, dubious_path)
+    else:
+        process_lib(input_path, output_path, args.lib_name, dubious_path)
+
     return 0
 
 

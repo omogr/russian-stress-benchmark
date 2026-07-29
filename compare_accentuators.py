@@ -86,113 +86,6 @@ def should_have_stress_info(word_info: dict) -> bool:
 # ---------------------------------------------------------------------------
 # Сопоставление слов
 # ---------------------------------------------------------------------------
-'''
-def match_words(
-    gold_words: list[dict],
-    lib_words: list[dict],
-) -> tuple[list[tuple[int, int]], int, int, bool]:
-    """
-    Сопоставляет слова из GOLD и библиотеки.
-
-    Возвращает кортеж:
-      1. matched_pairs — список (gold_idx, lib_idx) для сопоставленных слов;
-      2. unmatched_diff_count — число несопоставленных слов в предложениях,
-         где количество слов НЕ совпало с GOLD;
-      3. unmatched_same_count_diff_text — число несопоставленных слов
-         в предложениях, где количество слов совпало, но тексты не совпали;
-      4. has_unmatched — True, если в предложении есть несопоставленные слова.
-    """
-    # Если у одной из сторон нет разбиения на слова — всё несопоставлено
-    if not gold_words or not lib_words:
-        total = (len(gold_words) if gold_words else 0) + (len(lib_words) if lib_words else 0)
-        return [], total, 0, total > 0
-
-    # Полное совпадение по длине и текстам
-    if len(gold_words) == len(lib_words):
-        all_match = all(compare_strings(gw["text"], lw["text"]) for gw, lw in zip(gold_words, lib_words))
-        if all_match:
-            pairs = [(i, i) for i in range(len(gold_words))]
-            return pairs, 0, 0, False
-
-    # Частичное совпадение: префикс + суффикс
-    g_len, l_len = len(gold_words), len(lib_words)
-
-    prefix = 0
-    for i in range(min(g_len, l_len)):
-        if compare_strings(gold_words[i]["text"], lib_words[i]["text"]):
-            prefix += 1
-        else:
-            break
-
-    suffix = 0
-    max_suffix = min(g_len - prefix, l_len - prefix)
-    for i in range(1, max_suffix + 1):
-        if compare_strings(gold_words[-i]["text"], lib_words[-i]["text"]):
-            suffix += 1
-        else:
-            break
-
-# ---------------------------------------------------------------------------
-# Утилиты
-# ---------------------------------------------------------------------------
-
-VOWELS = set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
-
-
-def load_json(path: Path) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def get_vowels(word: str) -> list[str]:
-    """Возвращает список гласных букв слова в порядке следования."""
-    return [ch for ch in word if ch in VOWELS]
-
-
-def should_have_stress(word: str) -> bool:
-    """
-    Определяет, обязано ли слово иметь проставленное ударение.
-    Ударение не требуется, если:
-      • в слове меньше двух гласных;
-      • в слове присутствует буква «ё» / «Ё».
-    """
-    vowels = get_vowels(word)
-    if len(vowels) < 2:
-        return False
-    if "ё" in word or "Ё" in word:
-        return False
-    return True
-
-
-def should_have_stress_info(word_info: dict) -> bool:
-    """
-    Определяет, обязано ли слово иметь проставленное ударение.
-    Ударение не требуется, если:
-      • в слове меньше двух гласных;
-      • в слове присутствует буква «ё» / «Ё».
-    """
-    word = word_info["text"]
-    vowels = get_vowels(word)
-    if len(vowels) < 2:
-        return False
-    if "ё" in word or "Ё" in word:
-        return False
-        
-    if "-" in word:
-        return False
-        
-    if word_info.get("start") is None:
-        return False
-        
-    if word_info.get("stress_char_index") is None:
-        return False
-    return True
-
-'''
-
-# ---------------------------------------------------------------------------
-# Сопоставление слов
-# ---------------------------------------------------------------------------
 
 def match_words(
     gold_words: list[dict],
@@ -270,9 +163,7 @@ def get_stress_pos(word_info: dict) -> int:
     stress_char_index = word_info.get("stress_char_index")
     if stress_char_index is None:
         return None
-    #start_index = word_info.get("start")
-    #if start_index is None:
-    #    return None
+
     return stress_char_index # - start_index
 
 
@@ -338,9 +229,6 @@ def compare_sentence(
         gold_stress = get_stress_pos(gw)
         lib_stress = get_stress_pos(lw)
         
-
-
-        #if should_have_stress(gw["text"]):
         if should_have_stress_info(gw):
             result["gold_words_with_stress"] += 1
 
@@ -502,8 +390,6 @@ def main() -> None:
         },
         "library_results": {},
     }
-    
-    #sentence_errors = {}
 
     for lib_name in sorted(libraries.keys()):
         lib_comparison = all_per_sentence[lib_name]
@@ -521,8 +407,6 @@ def main() -> None:
         common_stress_errors = 0
         common_missing_stress = 0
         common_gold_words_with_stress = 0
-        
-        #sum_all_errors = []
 
         for sent_idx, sent_result in enumerate(lib_comparison):
             total_stress_errors += sent_result["stress_errors"]
@@ -534,14 +418,6 @@ def main() -> None:
             total_matched_pairs += sent_result["matched_word_pairs"]
             total_gold_words_with_stress += sent_result["gold_words_with_stress"]
             
-            #error_pairs = sent_result.get("error_pairs")
-            #if error_pairs:
-            #    sum_all_errors.extend(error_pairs)
-            #    if sent_idx not in sentence_errors:
-            #        sentence_errors[sent_idx] = {}
-            #    if lib_name not in sentence_errors[sent_idx]:
-            #        sentence_errors[sent_idx][lib_name] = error_pairs
-
             # Подсчёт по общим словам
             for g_idx, l_idx in sent_result.get("matched_pairs", []):
                 if (sent_idx, g_idx) not in common_words:
@@ -581,10 +457,6 @@ def main() -> None:
             },
             "per_sentence": lib_comparison,
         }
-        
-        #print('sum_all_errors', lib_name, len(sum_all_errors))
-        #with open(f"{lib_name}_errors.json", "w", encoding="utf-8") as f:
-        #    json.dump(sum_all_errors, f, ensure_ascii=False, indent=2)
 
     for lib_name in sorted(libraries.keys()):
         lib_comparison = output["library_results"].get(lib_name, {}).get("per_sentence", {})
@@ -601,40 +473,7 @@ def main() -> None:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
     print(f"Результаты сохранены в {output_path}")
-    '''
-    common_errors = {}
-    for sent_idx, value in sentence_errors.items():
-        for lib_name, word_list in value.items():
-            for tw in word_list:
-                word_text = tw["gold"]["text"]
-                key = (sent_idx, word_text)
-                if sent_idx not in common_errors:
-                    common_errors[sent_idx] = {}
-                if word_text not in common_errors[sent_idx]:
-                    common_errors[sent_idx][word_text] = {}
-                common_errors[sent_idx][word_text][lib_name] = (tw["gold"]["start"], tw["gold"]["stress_char_index"])
-    
-    error_sentences = []
-    for sent_idx, ts in enumerate(gold_data.get("sentences", [])):
-        if sent_idx not in common_errors:
-            continue
-            
-        err_words = []
-        for word_text in common_errors[sent_idx]:
-            if "ruaccent_turbo" not in common_errors[sent_idx][word_text]:
-                continue
-            if "wiki_enhancer" not in common_errors[sent_idx][word_text]:
-                continue
-            err_words.append(word_text)
 
-        ts["words"] = []
-        if err_words:
-            error_sentences.append((sent_idx, err_words, ts["accented_text"]))
-
-    output_path = "errors.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(error_sentences, f, ensure_ascii=False, indent=2)
-    '''
 
 if __name__ == "__main__":
     main()
