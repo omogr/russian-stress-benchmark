@@ -150,7 +150,7 @@ def create_default_config() -> BenchmarkConfig:
         ],
         output_dir="output",
         cache_dir=".benchmark_cache",
-        dubious_file="dubious/dubious.txt",
+        dubious_file="gold/dubious.txt",
         reports="both",
     )
 
