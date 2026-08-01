@@ -34,7 +34,7 @@ VOWELS = frozenset('аеёиоуыэюяАЕЁИОУЫЭЮЯ')
 
 # Try to import TextParser from text_parser; if unavailable, fail with a clear message
 try:
-    from text_parser.parser import TextParser
+    from text_parser import TextParser
     _PARSER = TextParser()
 except ImportError as exc:
     raise ImportError(
