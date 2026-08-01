@@ -72,7 +72,7 @@ python benchmark.py run --gold gold/pattern.txt --libs my_library
          └───────────────────────┼───────────────────────┘
                                  │
                     ┌─────────────▼─────────────┐
-                    │   adapters/runner.py      │
+                    │   runner.py               │
                     │                           │
                     │  - читает input.json      │
                     │  - импортирует Accentuator│
@@ -129,7 +129,7 @@ python benchmark.py run --gold gold/pattern.txt --libs my_library
 echo '{"sentences":[{"original_text":"В л+есу род+илась ёлочка."}]}' > test_input.json
 
 # 2. Запустить раннер
-python adapters/runner.py my_library test_input.json test_output.json
+python runner.py my_library test_input.json test_output.json
 
 # 3. Проверить результат
 cat test_output.json | python -m json.tool
