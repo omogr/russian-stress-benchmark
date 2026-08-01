@@ -172,7 +172,7 @@ python benchmark.py run --gold gold/pattern.txt --libs my_library
 echo '{"sentences":[{"original_text":"В л+есу род+илась ёлочка."}]}' > test_input.json
 
 # Запустить раннер
-python adapters/runner.py adapters.my_library test_input.json test_output.json
+python runner.py adapters.my_library test_input.json test_output.json
 
 # Проверить результат
 cat test_output.json | python -m json.tool
@@ -183,12 +183,12 @@ cat test_output.json | python -m json.tool
 ```
 russian-stress-benchmark/
 ├── benchmark.py              # Единый оркестратор
+├── runner.py                 # Единый раннер (общая логика)
 ├── benchmark_config.json     # Конфигурация
 ├── README.md
 ├── requirements.txt
 │
 ├── adapters/                 # Адаптеры библиотек
-│   ├── runner.py             # Единый раннер (общая логика)
 │   ├── _template.py          # Шаблон для новых адаптеров
 │   ├── silero_stress.py
 │   ├── udarenie.py
@@ -213,7 +213,7 @@ russian-stress-benchmark/
 ```
 
 **Адаптер** — минимальный модуль, знает только о своей библиотеке.  
-**Раннер** (`adapters/runner.py`) — общая логика: замер времени, нормализация, сохранение.  
+**Раннер** (`runner.py`) — общая логика: замер времени, нормализация, сохранение.  
 **Оркестратор** (`benchmark.py`) — управляет пайплайном, кэшем, отчётами.
 
 ## Описание скриптов
@@ -221,7 +221,7 @@ russian-stress-benchmark/
 ### `benchmark.py`
 Единый оркестратор. Управляет пайплайном: `split → extract_gold → [run_adapter] × N → compare → report`. Поддерживает кэширование, инкрементальный запуск, проверку статуса.
 
-### `adapters/runner.py`
+### `runner.py`
 Единый раннер для всех адаптеров. Получает имя модуля, динамически импортирует `Accentuator`, замеряет время загрузки и обработки, нормализует ударения, сохраняет результаты.
 
 ### `core/split_text_by_lines.py`
@@ -254,7 +254,7 @@ output/pattern.json
        │           ▼
        │    output/lib/GOLD_results.json
        │
-       ├──► adapters/runner.py adapters.<lib1>
+       ├──► runner.py adapters.<lib1>
        │           │
        │           ▼
        │    output/raw/<lib1>_results.json
@@ -265,7 +265,7 @@ output/pattern.json
        │           ▼
        │    output/lib/<lib1>_results.json
        │
-       ├──► adapters/runner.py adapters.<lib2> ──► ...
+       ├──► runner.py adapters.<lib2> ──► ...
        │
        ▼
 core/compare_accentuators.py ──► output/comparison.json
