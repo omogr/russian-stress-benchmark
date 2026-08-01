@@ -3,23 +3,26 @@
 benchmark.py
 
 Единый оркестратор для сравнения библиотек расстановки ударений.
-Заменяет run.sh / run.bat. Управляет полным пайплайном:
-    split → extract_gold → [run_lib] × N → compare → report
+Плагинная архитектура: адаптеры — минимальные модули с классом Accentuator,
+общая логика (замер времени, нормализация, сохранение) — в runner.py.
 
 Usage:
-    # Полный прогон всех библиотек
+    # Инициализация
+    python benchmark.py init
+
+    # Полный прогон
     python benchmark.py run --gold gold/pattern.txt --config benchmark_config.json
 
-    # Перезапуск конкретной библиотеки (остальные из кэша)
+    # Перезапуск конкретной библиотеки
     python benchmark.py run --gold gold/pattern.txt --libs silero_stress --force
 
-    # Показать статус — что посчитано, что нужно пересчитать
+    # Статус
     python benchmark.py status --gold gold/pattern.txt --config benchmark_config.json
 
-    # Очистить кэш конкретной библиотеки
-    python benchmark.py clean --lib silero_stress
+    # Список адаптеров
+    python benchmark.py list-adapters
 
-    # Очистить весь кэш
+    # Очистить кэш
     python benchmark.py clean --all
 """
 
@@ -34,7 +37,7 @@ import traceback
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 # -----------------------------------------------------------------------------
@@ -44,9 +47,9 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_OUTPUT_DIR = Path("output")
 DEFAULT_CACHE_DIR = Path(".benchmark_cache")
 DEFAULT_CONFIG_FILE = Path("benchmark_config.json")
+DEFAULT_ADAPTERS_DIR = Path("adapters")
 
-VOWELS = 'аеёиоуыэюяАЕЁИОУЫЭЮЯ'
-
+RUNNER_SCRIPT = "runner.py"
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -56,27 +59,23 @@ VOWELS = 'аеёиоуыэюяАЕЁИОУЫЭЮЯ'
 class LibraryConfig:
     """Конфигурация одной библиотеки для тестирования."""
     name: str
-    # Команда для запуска run_accentuator.py
-    accentuator_args: List[str] = field(default_factory=list)
-    # Дополнительные аргументы (например, --data-path)
-    extra_args: Dict[str, str] = field(default_factory=dict)
-    # returns_document — библиотека возвращает DocumentResult (с пословной разметкой)
-    returns_document: bool = False
-    # Описание для отчёта
     description: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "LibraryConfig":
         return cls(
             name=data["name"],
-            accentuator_args=data.get("accentuator_args", []),
-            extra_args=data.get("extra_args", {}),
-            returns_document=data.get("returns_document", False),
             description=data.get("description", ""),
+            extra=data.get("extra", {}),
         )
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "name": self.name,
+            "description": self.description,
+            "extra": self.extra,
+        }
 
 
 @dataclass
@@ -85,8 +84,8 @@ class BenchmarkConfig:
     libraries: List[LibraryConfig]
     output_dir: str = "output"
     cache_dir: str = ".benchmark_cache"
+    adapters_dir: str = "adapters"
     dubious_file: Optional[str] = None
-    # Генерировать отчёты: "ru", "en", "both"
     reports: str = "both"
 
     @classmethod
@@ -95,6 +94,7 @@ class BenchmarkConfig:
             libraries=[LibraryConfig.from_dict(lib) for lib in data.get("libraries", [])],
             output_dir=data.get("output_dir", "output"),
             cache_dir=data.get("cache_dir", ".benchmark_cache"),
+            adapters_dir=data.get("adapters_dir", "adapters"),
             dubious_file=data.get("dubious_file"),
             reports=data.get("reports", "both"),
         )
@@ -104,6 +104,7 @@ class BenchmarkConfig:
             "libraries": [lib.to_dict() for lib in self.libraries],
             "output_dir": self.output_dir,
             "cache_dir": self.cache_dir,
+            "adapters_dir": self.adapters_dir,
             "dubious_file": self.dubious_file,
             "reports": self.reports,
         }
@@ -120,36 +121,39 @@ class BenchmarkConfig:
 
 
 # -----------------------------------------------------------------------------
+# Adapter discovery
+# -----------------------------------------------------------------------------
+
+def discover_adapters(adapters_dir: Path) -> Dict[str, Path]:
+    """Находит все адаптеры в директории (исключая runner.py и _*.py)."""
+    adapters = {}
+    if not adapters_dir.exists():
+        return adapters
+
+    for fpath in adapters_dir.glob("*.py"):
+        fname = fpath.name
+        if fname.startswith("_") or fname in ("runner.py", "__init__.py"):
+            continue
+        lib_name = fname[:-3]
+        adapters[lib_name] = fpath
+
+    return adapters
+
+
+# -----------------------------------------------------------------------------
 # Default config factory
 # -----------------------------------------------------------------------------
 
 def create_default_config() -> BenchmarkConfig:
-    """Создаёт конфигурацию по умолчанию, совместимую с run.sh."""
     return BenchmarkConfig(
         libraries=[
-            LibraryConfig(
-                name="silero_stress",
-                accentuator_args=["silero_stress"],
-                returns_document=False,
-                description="Silero stress placement",
-            ),
-            LibraryConfig(
-                name="udarenie",
-                accentuator_args=["udarenie"],
-                extra_args={"--data-path": "data_plus"},
-                returns_document=True,
-                description="Udarenie with morphology",
-            ),
-            LibraryConfig(
-                name="accent_engine",
-                accentuator_args=["accent_engine"],
-                extra_args={"--data-path": "data_plus"},
-                returns_document=True,
-                description="Accent engine without morphology",
-            ),
+            LibraryConfig(name="silero_stress", description="Silero stress placement"),
+            LibraryConfig(name="udarenie", description="Udarenie with morphology"),
+            LibraryConfig(name="accent_engine", description="Accent engine without morphology"),
         ],
         output_dir="output",
         cache_dir=".benchmark_cache",
+        adapters_dir="adapters",
         dubious_file="gold/dubious.txt",
         reports="both",
     )
@@ -161,13 +165,11 @@ def create_default_config() -> BenchmarkConfig:
 
 @dataclass
 class CacheEntry:
-    """Запись в кэше для одной библиотеки."""
     library_name: str
     gold_hash: str
     config_hash: str
     completed_at: str
     output_file: str
-    # Хеш файла с результатами (для проверки целостности)
     result_hash: str = ""
 
     def to_dict(self) -> dict:
@@ -179,8 +181,6 @@ class CacheEntry:
 
 
 class BenchmarkCache:
-    """Управляет кэшем результатов бенчмарка."""
-
     def __init__(self, cache_dir: Path):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -200,7 +200,7 @@ class BenchmarkCache:
 
     def _save(self) -> None:
         data = {
-            "version": 1,
+            "version": 3,
             "updated_at": datetime.now().isoformat(),
             "entries": {name: entry.to_dict() for name, entry in self.entries.items()},
         }
@@ -226,14 +226,11 @@ class BenchmarkCache:
         self._save()
 
     def is_valid(self, library_name: str, gold_hash: str, config_hash: str) -> bool:
-        """Проверяет, актуален ли кэш для библиотеки."""
         entry = self.get(library_name)
         if entry is None:
             return False
-        # Проверяем, что gold и конфиг не изменились
         if entry.gold_hash != gold_hash or entry.config_hash != config_hash:
             return False
-        # Проверяем, что файл результатов существует
         result_path = Path(entry.output_file)
         if not result_path.exists():
             return False
@@ -241,7 +238,6 @@ class BenchmarkCache:
 
 
 def compute_file_hash(path: Path) -> str:
-    """Вычисляет SHA256 хеш файла."""
     h = hashlib.sha256()
     with open(path, 'rb') as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -250,17 +246,14 @@ def compute_file_hash(path: Path) -> str:
 
 
 def compute_string_hash(s: str) -> str:
-    """Вычисляет SHA256 хеш строки."""
     return hashlib.sha256(s.encode('utf-8')).hexdigest()
 
 
 # -----------------------------------------------------------------------------
-# Pipeline steps
+# Pipeline
 # -----------------------------------------------------------------------------
 
 class Pipeline:
-    """Управляет выполнением пайплайна бенчмарка."""
-
     def __init__(self, config: BenchmarkConfig, gold_path: Path,
                  output_dir: Path, cache: BenchmarkCache,
                  force_libs: Optional[List[str]] = None,
@@ -271,14 +264,13 @@ class Pipeline:
         self.cache = cache
         self.force_libs = set(force_libs or [])
         self.verbose = verbose
+        self.adapters_dir = Path(config.adapters_dir)
 
-        # Internal paths
         self.raw_dir = output_dir / "raw"
         self.lib_dir = output_dir / "lib"
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.lib_dir.mkdir(parents=True, exist_ok=True)
 
-        # Compute hashes
         self.gold_hash = compute_file_hash(gold_path)
         self.config_hash = compute_string_hash(json.dumps(config.to_dict(), sort_keys=True))
 
@@ -288,10 +280,6 @@ class Pipeline:
 
     @staticmethod
     def _decode_output(data: bytes) -> str:
-        """
-        Декодирует байтовый вывод процесса, пробуя несколько кодировок.
-        Порядок: UTF-8 -> cp1251 -> cp866 -> latin-1 (никогда не падает).
-        """
         if not data:
             return ""
         for enc in ('utf-8', 'cp1251', 'cp866', 'koi8-r', 'latin-1'):
@@ -299,28 +287,17 @@ class Pipeline:
                 return data.decode(enc)
             except UnicodeDecodeError:
                 continue
-        # fallback: заменяем невалидные байты
         return data.decode('utf-8', errors='replace')
 
     def run_command(self, cmd: List[str], description: str) -> int:
-        """Запускает внешнюю команду и возвращает код возврата."""
         self.log(f"Running: {' '.join(cmd)}")
         start = time.perf_counter()
 
-        # Передаём дочернему процессу PYTHONIOENCODING=utf-8,
-        # чтобы он сам писал в UTF-8 (если поддерживает)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
 
         try:
-            # Запускаем без text=True — получаем bytes, чтобы самостоятельно
-            # выбрать правильную кодировку
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=False,  # <-- получаем bytes
-                env=env,
-            )
+            result = subprocess.run(cmd, capture_output=True, text=False, env=env)
             elapsed = time.perf_counter() - start
 
             stdout = self._decode_output(result.stdout)
@@ -341,13 +318,9 @@ class Pipeline:
 
         except FileNotFoundError as e:
             print(f"[ERROR] {description}: command not found — {e.filename}")
-            print(f"  Убедитесь, что скрипт/программа доступна в PATH или указана правильно.")
             return 1
         except PermissionError as e:
             print(f"[ERROR] {description}: permission denied — {e.filename}")
-            return 1
-        except subprocess.TimeoutExpired:
-            print(f"[ERROR] {description}: timeout expired")
             return 1
         except Exception as e:
             print(f"[ERROR] {description} raised unexpected exception: {e}")
@@ -355,16 +328,14 @@ class Pipeline:
             return 1
 
     def step_split(self) -> Path:
-        """Этап 1: Разбиение gold-текста на предложения."""
         output_path = self.raw_dir / "pattern.json"
         if output_path.exists():
             self.log(f"Reusing existing split: {output_path}")
             return output_path
 
         cmd = [
-            sys.executable, "split_text_by_lines.py",
-            str(self.gold_path),
-            "-o", str(output_path),
+            sys.executable, "core/split_text_by_lines.py",
+            str(self.gold_path), "-o", str(output_path),
         ]
         rc = self.run_command(cmd, "Split text into sentences")
         if rc != 0:
@@ -372,17 +343,14 @@ class Pipeline:
         return output_path
 
     def step_extract_gold(self, split_path: Path) -> Path:
-        """Этап 2: Извлечение эталонной разметки."""
         output_path = self.lib_dir / "GOLD_results.json"
-
         dubious_arg = []
         if self.config.dubious_file and Path(self.config.dubious_file).exists():
             dubious_arg = ["-d", self.config.dubious_file]
 
         cmd = [
-            sys.executable, "extract_accentuation.py",
-            str(split_path),
-            "-o", str(output_path),
+            sys.executable, "core/extract_accentuation.py",
+            str(split_path), "-o", str(output_path),
             "--mode", "gold",
         ] + dubious_arg
 
@@ -391,55 +359,76 @@ class Pipeline:
             raise RuntimeError("Gold extraction failed")
         return output_path
 
-    def step_run_library(self, lib_config: LibraryConfig, gold_json: Path) -> Path:
-        """Этап 3а: Запуск библиотеки через run_accentuator.py."""
+    def step_run_adapter0(self, lib_config: LibraryConfig, gold_json: Path) -> Path:
+        """Запускает адаптер через runner.py."""
         raw_output = self.raw_dir / f"{lib_config.name}_results.json"
 
-        # Build command
-        cmd = [
-            sys.executable, "run_accentuator.py",
-            lib_config.name,
-            str(gold_json),
-            "-o", str(self.raw_dir),
-        ]
-        for key, value in lib_config.extra_args.items():
-            cmd.extend([key, value])
+        # Формируем имя модуля для импорта.
+        # Если адаптер лежит в adapters/<name>.py, то имя модуля — adapters.<name>
+        module_name = f"adapters.{lib_config.name}"
 
-        rc = self.run_command(cmd, f"Run accentuator '{lib_config.name}'")
+        cmd = [
+            sys.executable, RUNNER_SCRIPT,
+            module_name,
+            str(gold_json),
+            str(raw_output),
+        ]
+
+        rc = self.run_command(cmd, f"Run adapter '{lib_config.name}'")
         if rc != 0:
-            raise RuntimeError(f"Accentuator '{lib_config.name}' failed")
+            raise RuntimeError(f"Adapter '{lib_config.name}' failed")
 
         return raw_output
 
-    def step_extract_words(self, lib_config: LibraryConfig, raw_output: Path) -> Path:
-        """Этап 3б: Извлечение пословной разметки из результата библиотеки."""
-        lib_output = self.lib_dir / f"{lib_config.name}_results.json"
+    def step_run_adapter(self, lib_config: LibraryConfig, gold_json: Path) -> Path:
+        raw_output = self.raw_dir / f"{lib_config.name}_results.json"
+        module_name = f"adapters.{lib_config.name}"
 
+        cmd = [
+            sys.executable, RUNNER_SCRIPT,
+            module_name,
+            str(gold_json),
+            str(raw_output),
+        ]
+
+        # Запускаем без capture — вывод идёт прямо в терминал
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
+        print(f"Running: {' '.join(cmd)}")
+        start = time.perf_counter()
+        
+        result = subprocess.run(cmd, stdout=None, stderr=None, env=env)
+        
+        elapsed = time.perf_counter() - start
+        self.log(f"Adapter '{lib_config.name}' completed in {elapsed:.2f}s")
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Adapter '{lib_config.name}' failed")
+        return raw_output
+    
+    def step_extract_words(self, lib_config: LibraryConfig, raw_output: Path) -> Path:
+        lib_output = self.lib_dir / f"{lib_config.name}_results.json"
         dubious_arg = []
         if self.config.dubious_file and Path(self.config.dubious_file).exists():
             dubious_arg = ["-d", self.config.dubious_file]
 
         cmd = [
-            sys.executable, "extract_accentuation.py",
-            str(raw_output),
-            "-o", str(lib_output),
-            "--mode", "lib",
-            "--lib-name", lib_config.name,
+            sys.executable, "core/extract_accentuation.py",
+            str(raw_output), "-o", str(lib_output),
+            "--mode", "lib", "--lib-name", lib_config.name,
         ] + dubious_arg
 
         rc = self.run_command(cmd, f"Extract words for '{lib_config.name}'")
         if rc != 0:
             raise RuntimeError(f"Word extraction for '{lib_config.name}' failed")
-
         return lib_output
 
     def step_compare(self) -> Path:
-        """Этап 4: Сравнение результатов."""
         output_path = self.output_dir / "comparison.json"
         cmd = [
-            sys.executable, "compare_accentuators.py",
-            str(self.lib_dir),
-            "-o", str(output_path),
+            sys.executable, "core/compare_accentuators.py",
+            str(self.lib_dir), "-o", str(output_path),
         ]
         rc = self.run_command(cmd, "Compare accentuators")
         if rc != 0:
@@ -447,36 +436,28 @@ class Pipeline:
         return output_path
 
     def step_report(self, comparison_path: Path) -> List[Path]:
-        """Этап 5: Генерация отчётов."""
         reports = []
-
         if self.config.reports in ("both", "ru"):
             ru_path = self.output_dir / "report.md"
-            cmd = [
-                sys.executable, "generate_report.py",
-                str(comparison_path),
-                str(ru_path),
-            ]
-            rc = self.run_command(cmd, "Generate RU report")
-            if rc == 0:
+            cmd = [sys.executable, "core/generate_report.py", str(comparison_path), str(ru_path)]
+            if self.run_command(cmd, "Generate RU report") == 0:
                 reports.append(ru_path)
-
         if self.config.reports in ("both", "en"):
             en_path = self.output_dir / "report_en.md"
-            cmd = [
-                sys.executable, "generate_report_en.py",
-                str(comparison_path),
-                str(en_path),
-            ]
-            rc = self.run_command(cmd, "Generate EN report")
-            if rc == 0:
+            cmd = [sys.executable, "core/generate_report_en.py", str(comparison_path), str(en_path)]
+            if self.run_command(cmd, "Generate EN report") == 0:
                 reports.append(en_path)
-
         return reports
 
     def process_library(self, lib_config: LibraryConfig, gold_json: Path) -> Path:
-        """Обрабатывает одну библиотеку: запуск + извлечение слов + кэширование."""
         lib_output = self.lib_dir / f"{lib_config.name}_results.json"
+
+        # Проверяем, что адаптер существует
+        adapter_path = self.adapters_dir / f"{lib_config.name}.py"
+        if not adapter_path.exists():
+            print(f"[ERROR] Адаптер не найден: {adapter_path}")
+            print(f"  Скопируйте adapters/_template.py → adapters/{lib_config.name}.py и настройте")
+            raise RuntimeError(f"Adapter not found for '{lib_config.name}'")
 
         # Check cache
         needs_run = True
@@ -486,7 +467,6 @@ class Pipeline:
                 if entry and Path(entry.output_file).exists():
                     self.log(f"Using cached results for '{lib_config.name}'")
                     needs_run = False
-                    # Copy cached result to expected location if needed
                     cached_path = Path(entry.output_file)
                     if cached_path != lib_output:
                         import shutil
@@ -497,10 +477,9 @@ class Pipeline:
             print(f"Processing library: {lib_config.name}")
             print(f"{'='*60}")
 
-            raw_output = self.step_run_library(lib_config, gold_json)
+            raw_output = self.step_run_adapter(lib_config, gold_json)
             lib_output = self.step_extract_words(lib_config, raw_output)
 
-            # Update cache
             result_hash = compute_file_hash(lib_output)
             entry = CacheEntry(
                 library_name=lib_config.name,
@@ -515,44 +494,35 @@ class Pipeline:
         return lib_output
 
     def run(self) -> int:
-        """Запускает полный пайплайн."""
         overall_start = time.perf_counter()
-
         try:
-            # Step 1: Split
             print("\n" + "="*60)
             print("STEP 1: Split gold text into sentences")
             print("="*60)
             split_path = self.step_split()
 
-            # Step 2: Extract GOLD
             print("\n" + "="*60)
             print("STEP 2: Extract GOLD accentuation")
             print("="*60)
             gold_json = self.step_extract_gold(split_path)
 
-            # Step 3: Process each library
             print("\n" + "="*60)
             print("STEP 3: Process libraries")
             print("="*60)
             for lib_config in self.config.libraries:
                 self.process_library(lib_config, gold_json)
 
-            # Step 4: Compare
             print("\n" + "="*60)
             print("STEP 4: Compare results")
             print("="*60)
             comparison_path = self.step_compare()
 
-            # Step 5: Reports
             print("\n" + "="*60)
             print("STEP 5: Generate reports")
             print("="*60)
             report_paths = self.step_report(comparison_path)
 
             overall_time = time.perf_counter() - overall_start
-
-            # Summary
             print("\n" + "="*60)
             print("BENCHMARK COMPLETE")
             print("="*60)
@@ -562,7 +532,6 @@ class Pipeline:
             for rp in report_paths:
                 print(f"Report: {rp}")
             print("="*60)
-
             return 0
 
         except RuntimeError as e:
@@ -575,11 +544,10 @@ class Pipeline:
 
 
 # -----------------------------------------------------------------------------
-# Status command
+# Commands
 # -----------------------------------------------------------------------------
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Показывает статус кэша и что нужно пересчитать."""
     gold_path = Path(args.gold)
     if not gold_path.exists():
         print(f"[ERROR] Gold file not found: {gold_path}")
@@ -594,6 +562,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     cache = BenchmarkCache(Path(config.cache_dir))
     gold_hash = compute_file_hash(gold_path)
     config_hash = compute_string_hash(json.dumps(config.to_dict(), sort_keys=True))
+    adapters_dir = Path(config.adapters_dir)
+    discovered = discover_adapters(adapters_dir)
 
     print("\n" + "="*60)
     print("BENCHMARK STATUS")
@@ -604,75 +574,59 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"Config hash: {config_hash[:16]}...")
     print(f"Cache dir: {config.cache_dir}")
     print(f"Output dir: {config.output_dir}")
+    print(f"Adapters dir: {config.adapters_dir}")
+    if discovered:
+        print(f"Discovered adapters: {', '.join(sorted(discovered.keys()))}")
     print("-"*60)
-    print(f"{'Library':<20} {'Status':<15} {'Cached':<20}")
+    print(f"{'Library':<20} {'Adapter':<10} {'Status':<15} {'Cached':<20}")
     print("-"*60)
 
     for lib in config.libraries:
+        has_adapter = "✅" if lib.name in discovered else "❌"
         entry = cache.get(lib.name)
         if entry is None:
-            status = "NOT RUN"
-            cached = "—"
+            status, cached = "NOT RUN", "—"
         elif entry.gold_hash != gold_hash:
-            status = "STALE (gold)"
-            cached = entry.completed_at[:19] if entry.completed_at else "—"
+            status, cached = "STALE (gold)", entry.completed_at[:19]
         elif entry.config_hash != config_hash:
-            status = "STALE (config)"
-            cached = entry.completed_at[:19] if entry.completed_at else "—"
+            status, cached = "STALE (config)", entry.completed_at[:19]
         elif not Path(entry.output_file).exists():
-            status = "MISSING FILE"
-            cached = entry.completed_at[:19] if entry.completed_at else "—"
+            status, cached = "MISSING FILE", entry.completed_at[:19]
         else:
-            status = "VALID ✅"
-            cached = entry.completed_at[:19] if entry.completed_at else "—"
+            status, cached = "VALID ✅", entry.completed_at[:19]
+        print(f"{lib.name:<20} {has_adapter:<10} {status:<15} {cached:<20}")
 
-        print(f"{lib.name:<20} {status:<15} {cached:<20}")
-
+    orphan = set(discovered.keys()) - {lib.name for lib in config.libraries}
+    if orphan:
+        print("-"*60)
+        print(f"Orphan adapters (not in config): {', '.join(sorted(orphan))}")
     print("-"*60)
     print("STALE = результат устарел и будет пересчитан при следующем run")
-    print("NOT RUN = библиотека ещё не запускалась")
     print("="*60)
     return 0
 
 
-# -----------------------------------------------------------------------------
-# Clean command
-# -----------------------------------------------------------------------------
-
 def cmd_clean(args: argparse.Namespace) -> int:
-    """Очищает кэш."""
     cache_dir = Path(args.cache_dir) if args.cache_dir else DEFAULT_CACHE_DIR
     cache = BenchmarkCache(cache_dir)
-
     if args.all:
         cache.clear_all()
         print(f"Cache cleared: {cache_dir}")
         return 0
-
     if args.lib:
         removed = cache.remove(args.lib)
-        if removed:
-            print(f"Removed cache entry for: {args.lib}")
-        else:
-            print(f"No cache entry found for: {args.lib}")
+        print(f"Removed cache entry for: {args.lib}" if removed else f"No cache entry found for: {args.lib}")
         return 0
-
     print("Use --all to clear all cache, or --lib <name> to remove specific library")
     return 1
 
 
-# -----------------------------------------------------------------------------
-# Run command
-# -----------------------------------------------------------------------------
-
 def cmd_run(args: argparse.Namespace) -> int:
-    """Запускает полный бенчмарк."""
     gold_path = Path(args.gold)
     if not gold_path.exists():
         print(f"[ERROR] Gold file not found: {gold_path}")
         return 1
 
-    # Load or create config
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG_FILE
     if config_path.exists():
         config = BenchmarkConfig.from_file(config_path)
@@ -684,43 +638,29 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("Please review and edit benchmark_config.json, then run again.")
         return 0
 
-    # Override output dir if specified
     output_dir = Path(args.output_dir) if args.output_dir else Path(config.output_dir)
     cache_dir = Path(args.cache_dir) if args.cache_dir else Path(config.cache_dir)
-
-    # Override reports if specified
     if args.reports:
         config.reports = args.reports
 
-    # Filter libraries if specified
     if args.libs:
         lib_names = set(args.libs.split(','))
         config.libraries = [lib for lib in config.libraries if lib.name in lib_names]
         if not config.libraries:
-            print(f"[ERROR] No matching libraries found in config")
+            print("[ERROR] No matching libraries found in config")
             return 1
 
     cache = BenchmarkCache(cache_dir)
     force_libs = args.libs.split(',') if args.force and args.libs else None
 
     pipeline = Pipeline(
-        config=config,
-        gold_path=gold_path,
-        output_dir=output_dir,
-        cache=cache,
-        force_libs=force_libs,
-        verbose=args.verbose,
+        config=config, gold_path=gold_path, output_dir=output_dir,
+        cache=cache, force_libs=force_libs, verbose=args.verbose,
     )
-
     return pipeline.run()
 
 
-# -----------------------------------------------------------------------------
-# Init command
-# -----------------------------------------------------------------------------
-
 def cmd_init(args: argparse.Namespace) -> int:
-    """Создаёт файл конфигурации по умолчанию."""
     config_path = Path(args.config) if args.config else DEFAULT_CONFIG_FILE
     if config_path.exists() and not args.force:
         print(f"Config already exists: {config_path}")
@@ -730,7 +670,28 @@ def cmd_init(args: argparse.Namespace) -> int:
     config = create_default_config()
     config.to_file(config_path)
     print(f"Created default config: {config_path}")
-    print("Please edit it to match your setup.")
+
+    adapters_dir = Path(config.adapters_dir)
+    adapters_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Adapters directory: {adapters_dir}")
+    print("  Copy adapters/_template.py to <your_lib>.py and customize")
+    return 0
+
+
+def cmd_list_adapters(args: argparse.Namespace) -> int:
+    adapters_dir = Path(args.adapters_dir) if args.adapters_dir else DEFAULT_ADAPTERS_DIR
+    discovered = discover_adapters(adapters_dir)
+    print("\n" + "="*60)
+    print("DISCOVERED ADAPTERS")
+    print("="*60)
+    print(f"Adapters directory: {adapters_dir}")
+    print("-"*60)
+    if not discovered:
+        print("No adapters found.")
+        return 0
+    for name in sorted(discovered.keys()):
+        print(f"  {name:<25} {discovered[name]}")
+    print("="*60)
     return 0
 
 
@@ -744,86 +705,54 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Инициализация конфигурации
   python benchmark.py init
-
-  # Полный прогон
   python benchmark.py run --gold gold/pattern.txt
-
-  # Только указанные библиотеки
   python benchmark.py run --gold gold/pattern.txt --libs silero_stress,udarenie
-
-  # Перезапуск конкретной библиотеки
-  python benchmark.py run --gold gold/pattern.txt --libs accent_engine --force
-
-  # Проверить статус кэша
   python benchmark.py status --gold gold/pattern.txt
-
-  # Очистить кэш
+  python benchmark.py list-adapters
   python benchmark.py clean --all
         """,
     )
     subparsers = parser.add_subparsers(dest='command', help='Доступные команды')
 
-    # init
-    init_parser = subparsers.add_parser('init', help='Создать конфигурацию по умолчанию')
-    init_parser.add_argument('-c', '--config', default='benchmark_config.json',
-                             help='Путь к конфигу (default: benchmark_config.json)')
-    init_parser.add_argument('--force', action='store_true',
-                             help='Перезаписать существующий конфиг')
+    init_parser = subparsers.add_parser('init', help='Создать конфигурацию')
+    init_parser.add_argument('-c', '--config', default='benchmark_config.json')
+    init_parser.add_argument('--force', action='store_true')
 
-    # run
     run_parser = subparsers.add_parser('run', help='Запустить бенчмарк')
-    run_parser.add_argument('--gold', required=True,
-                            help='Путь к эталонному тексту (gold/pattern.txt)')
-    run_parser.add_argument('-c', '--config', default='benchmark_config.json',
-                            help='Путь к конфигу (default: benchmark_config.json)')
-    run_parser.add_argument('--libs',
-                            help='Запустить только указанные библиотеки (через запятую)')
-    run_parser.add_argument('--force', action='store_true',
-                            help='Перезапустить указанные библиотеки (игнорировать кэш)')
-    run_parser.add_argument('-o', '--output-dir',
-                            help='Директория для результатов (переопределяет конфиг)')
-    run_parser.add_argument('--cache-dir',
-                            help='Директория для кэша (переопределяет конфиг)')
-    run_parser.add_argument('--reports', choices=['ru', 'en', 'both'],
-                            help='Какие отчёты генерировать')
-    run_parser.add_argument('-v', '--verbose', action='store_true',
-                            help='Подробный вывод')
+    run_parser.add_argument('--gold', required=True)
+    run_parser.add_argument('-c', '--config', default='benchmark_config.json')
+    run_parser.add_argument('--libs')
+    run_parser.add_argument('--force', action='store_true')
+    run_parser.add_argument('-o', '--output-dir')
+    run_parser.add_argument('--cache-dir')
+    run_parser.add_argument('--reports', choices=['ru', 'en', 'both'])
+    run_parser.add_argument('-v', '--verbose', action='store_true')
 
-    # status
-    status_parser = subparsers.add_parser('status', help='Показать статус кэша')
-    status_parser.add_argument('--gold', required=True,
-                               help='Путь к эталонному тексту')
-    status_parser.add_argument('-c', '--config', default='benchmark_config.json',
-                               help='Путь к конфигу (default: benchmark_config.json)')
+    status_parser = subparsers.add_parser('status', help='Показать статус')
+    status_parser.add_argument('--gold', required=True)
+    status_parser.add_argument('-c', '--config', default='benchmark_config.json')
 
-    # clean
     clean_parser = subparsers.add_parser('clean', help='Очистить кэш')
-    clean_parser.add_argument('--all', action='store_true',
-                              help='Очистить весь кэш')
-    clean_parser.add_argument('--lib',
-                              help='Удалить кэш конкретной библиотеки')
-    clean_parser.add_argument('--cache-dir',
-                              help='Директория кэша (default: .benchmark_cache)')
+    clean_parser.add_argument('--all', action='store_true')
+    clean_parser.add_argument('--lib')
+    clean_parser.add_argument('--cache-dir')
+
+    list_parser = subparsers.add_parser('list-adapters', help='Показать адаптеры')
+    list_parser.add_argument('--adapters-dir', default='adapters')
 
     args = parser.parse_args()
-
     if not args.command:
         parser.print_help()
         return 1
 
-    if args.command == 'init':
-        return cmd_init(args)
-    elif args.command == 'run':
-        return cmd_run(args)
-    elif args.command == 'status':
-        return cmd_status(args)
-    elif args.command == 'clean':
-        return cmd_clean(args)
-    else:
-        parser.print_help()
-        return 1
+    return {
+        'init': cmd_init,
+        'run': cmd_run,
+        'status': cmd_status,
+        'clean': cmd_clean,
+        'list-adapters': cmd_list_adapters,
+    }.get(args.command, lambda _: (parser.print_help(), 1)[1])(args)
 
 
 if __name__ == '__main__':

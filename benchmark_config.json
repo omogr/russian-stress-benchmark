@@ -2,38 +2,20 @@
   "libraries": [
     {
       "name": "silero_stress",
-      "accentuator_args": [
-        "silero_stress"
-      ],
-      "extra_args": {},
-      "returns_document": false,
       "description": "Silero stress placement"
     },
     {
       "name": "udarenie",
-      "accentuator_args": [
-        "udarenie"
-      ],
-      "extra_args": {
-        "--data-path": "data_plus"
-      },
-      "returns_document": true,
       "description": "Udarenie with morphology"
     },
     {
       "name": "accent_engine",
-      "accentuator_args": [
-        "accent_engine"
-      ],
-      "extra_args": {
-        "--data-path": "data_plus"
-      },
-      "returns_document": true,
       "description": "Accent engine without morphology"
     }
   ],
   "output_dir": "output",
   "cache_dir": ".benchmark_cache",
+  "adapters_dir": "adapters",
   "dubious_file": "gold/dubious.txt",
   "reports": "both"
 }
